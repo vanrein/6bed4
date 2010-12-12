@@ -50,7 +50,7 @@ struct tsphdr {
 };
 
 
-#define TUNNEL_CAPABILITIES "CAPABILITIES TUNNEL=V6UDPV4 AUTH=ANONYMOUS"
+#define TUNNEL_CAPABILITIES "CAPABILITY TUNNEL=V6UDPV4 AUTH=ANONYMOUS"
 
 #define MTU 1280
 
@@ -177,6 +177,7 @@ void tspcmd_reply (char *reply) {
 		v4tspcmd [MTU-1] = 0;
 	}
 	strncat (v4tspcmd, "\r\n", MTU+1);
+printf ("Reply =%s=\n", v4tspcmd);
 	sendto (v4sox, v4data, sizeof (struct tsphdr) + strlen (v4tspcmd),			MSG_DONTWAIT, (struct sockaddr *) &v4name, sizeof (v4name));
 }
 
@@ -193,10 +194,10 @@ void tspcmd_create (void) {
 	inet_ntop (AF_INET, &v4name.sin_addr, v4client, sizeof (v4client));
 	snprintf (v6client, sizeof (v6client)-1,
 		"%x:%x:%x:%x:%x:%x:%x::",
-			v6listen.s6_addr16 [0],
-			v6listen.s6_addr16 [1],
-			v6listen.s6_addr16 [2],
-			v6listen.s6_addr16 [3],
+			ntohs (v6listen.s6_addr16 [0]),
+			ntohs (v6listen.s6_addr16 [1]),
+			ntohs (v6listen.s6_addr16 [2]),
+			ntohs (v6listen.s6_addr16 [3]),
 			ntohl (v4name.sin_addr.s_addr) >> 16,
 			ntohl (v4name.sin_addr.s_addr) & 0x0000ffff,
 			ntohs (v4name.sin_port));
@@ -217,6 +218,10 @@ void tspcmd_create (void) {
 "  </client>\r\n"
 "</tunnel>"
 		, v4server, v6server, v4client, v6client, v6server);
+	char contlen [6];
+	snprintf (contlen, 5, "%04d", strlen (v4tspcmd) - 22);
+printf ("strlen = %d, contlen = \"%s\"\n", strlen (v4tspcmd), contlen);
+	memcpy (v4tspcmd + 16, contlen, 4);
 	tspcmd_reply (v4tspcmd);
 }
 
@@ -233,8 +238,9 @@ void handle_4to6_tspcmd (ssize_t v4tspcmdlen) {
 	}
 	//
 	// Handle VERSION= interaction
+printf ("CMD=%s=\n", v4tspcmd);
 	if (strncmp (v4tspcmd, "VERSION=", 8) == 0) {
-		if (strcmp (v4tspcmd + 8, "2.0\r\n") == 0) {
+		if (strcmp (v4tspcmd + 8, "2.0.0\r\n") == 0) {
 			tspcmd_reply (TUNNEL_CAPABILITIES);
 		} else {
 			tspcmd_reply ("302 Unsupported client version");
@@ -242,16 +248,16 @@ void handle_4to6_tspcmd (ssize_t v4tspcmdlen) {
 	}
 	//
 	// Handle AUTHENTICATE command
-	else if (strncmp (v4tspcmd, "AUTHENTICATE ", 13)) {
+	else if (strncmp (v4tspcmd, "AUTHENTICATE ", 13) == 0) {
 		if (strcmp (v4tspcmd + 13, "ANONYMOUS\r\n") == 0) {
 			tspcmd_reply ("200 Success\r\n");
 		} else {
-			tspcmd_reply ("300 Only ANONYMOUS authentication is supported");
+			tspcmd_reply ("300 Only ANONYMOUS authentication supported");
 		}
 	}
 	//
 	// Handle XML prefixed with "content-length:"
-	else if (strncmp (v4tspcmd, "content-length:", 15) == 0) {
+	else if (strncasecmp (v4tspcmd, "content-length:", 15) == 0) {
 		// Hoping to get away with not parsing XML:
 		if (strstr (v4tspcmd, "create")) {
 			tspcmd_create ();
@@ -262,7 +268,7 @@ void handle_4to6_tspcmd (ssize_t v4tspcmdlen) {
 	//
 	// Reject any further commands loudly
 	else {
-		tspcmd_reply ("400 Go away");
+		tspcmd_reply ("310 Go away");
 	}
 }
 
@@ -327,22 +333,22 @@ void handle_4to6 (void) {
 				program, strerror (errno));
 		return;
 	}
-	//
-	// Ensure complete headers
-	if (buflen < (sizeof (struct iphdr)
-			+ sizeof (struct udphdr)
-			+ sizeof (struct ip6_hdr) + 1)) {
+	if (buflen < 8) {
 		return;
 	}
 	int flag = v4data [0] & 0xf0;
 	switch (v4data [0] & 0xf0) {
 	case 0xf0:
 		/* Handle as a tunnel command package */
-		handle_4to6_tspcmd (buflen - sizeof (struct tsphdr));
+		if (buflen > sizeof (struct tsphdr) + 1) {
+			handle_4to6_tspcmd (buflen - sizeof (struct tsphdr));
+		}
 		return;
 	case 0x60:
 		/* Handle as a tunneled IPv6 package */
-		handle_4to6_payload (buflen);
+		if (buflen > sizeof (struct iphdr) + sizeof (struct udphdr) + sizeof (struct ip6_hdr) + 1) {
+			handle_4to6_payload (buflen);
+		}
 		return;
 	default:
 		/* Silently ignore wrong types of packages */
