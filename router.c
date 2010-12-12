@@ -85,21 +85,26 @@ struct in6_addr v6listen;
 
 struct {
 	struct tun_pi tun;
-	struct tsphdr tsp;
 	union {
-		u_int8_t data [MTU];
-		struct ip6_hdr v6hdr;
+		struct {
+			struct tsphdr tsp;
+			u_int8_t cmd [MTU];
+			u_int8_t zerobyte;
+		} cdata;
+		struct {
+			struct ip6_hdr v6hdr;
+			u_int8_t data [MTU];
+		} idata;
 	} udata;
-	u_int8_t zerobyte;
 } v4data6;
 
 #define v4tunpi6 	(v4data6.tun)
-#define v4data		((u_int8_t *) &v4data6.tsp)
-#define v4tsphdr	(&v4data6.tsp)
-#define v4tspcmd	(v4data6.udata.data)
-#define v4hdr6		(&v4data6.udata.v6hdr)
-#define v4src6		(&v4data6.udata.v6hdr.ip6_src)
-#define v4dst6		(&v4data6.udata.v6hdr.ip6_dst)
+#define v4data		((u_int8_t *) &v4data6.udata)
+#define v4tsphdr	(&v4data6.udata.cdata.tsp)
+#define v4tspcmd	(v4data6.udata.cdata.cmd)
+#define v4hdr6		(&v4data6.udata.idata.v6hdr)
+#define v4src6		(&v4data6.udata.idata.v6hdr.ip6_src)
+#define v4dst6		(&v4data6.udata.idata.v6hdr.ip6_dst)
 
 
 struct {
@@ -311,6 +316,8 @@ printf ("Sending IPv6, result = %d\n",
 			&v4data6, sizeof (struct tun_pi) + v4datalen,
 			MSG_DONTWAIT,
 			(struct sockaddr *) &v6name, sizeof (v6name)));
+printf ("Writing IPv6, result = %d\n",
+	write (v6sox, &v4data6, sizeof (struct tun_pi) + v4datalen));
 }
 
 /* Receive a tunnel package, and route it to either the handler for the
@@ -320,7 +327,7 @@ printf ("Sending IPv6, result = %d\n",
 void handle_4to6 (void) {
 	u_int8_t buf [1501];
 	ssize_t buflen;
-	size_t adrlen = sizeof (v4name);
+	socklen_t adrlen = sizeof (v4name);
 	//
 	// Receive IPv4 package, which may be tunneled or a tunnel request
 	buflen = recvfrom (v4sox,
@@ -333,11 +340,11 @@ void handle_4to6 (void) {
 				program, strerror (errno));
 		return;
 	}
-	if (buflen < 8) {
+	if (buflen < sizeof (struct tsphdr)) {
 		return;
 	}
 	int flag = v4data [0] & 0xf0;
-	switch (v4data [0] & 0xf0) {
+	switch (flag) {
 	case 0xf0:
 		/* Handle as a tunnel command package */
 		if (buflen > sizeof (struct tsphdr) + 1) {
@@ -431,6 +438,7 @@ void run_daemon (void) {
 		} else {
 			FD_SET (v6sox, &io);
 		}
+fflush (stdout);
 	}
 }
 
