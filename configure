@@ -1,0 +1,7 @@
+#!/bin/sh
+echo I am too old for autotools -- perhaps someone is interesting in putting it in?
+if [ -r Makefile.in ]
+then
+	echo 'Writing Makefile...'
+	cp Makefile.in Makefile
+fi

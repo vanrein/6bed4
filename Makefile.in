@@ -1,0 +1,4 @@
+
+pubtsp: router.c
+	gcc -DLINUX -ggdb3 -o $@ $<
+
