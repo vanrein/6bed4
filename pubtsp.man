@@ -16,6 +16,7 @@ pubtsp \- server-side daemon for public TSP service
 .SH SYNOPSYS
 .B pubtsp
 [\fB\-t\fR \fI/dev/tunX\fR] \fB\-l\fR \fIv4addr\fR \fB\-L\fR \fIv6prefix/64\fR
+.PP
 .B pubtsp
 \fB\-h\fR
 .SH DESCRIPTION
@@ -52,7 +53,7 @@ below for details, and SECURITY CHECKS for further precautions against abuse.
 The foreseen application of servers under this profile of TSP are
 IPv6-only services that are accessed from an IPv4-only network.  The pivotal
 point of defining IPv6-only service can be simplicity, or making IPv6
-more efficient and/or more useful.  To avoid making IPv6 a strict
+more efficient and/or more useful.  To avoid making IPv6 a breaking
 requirement, clients for such an IPv6-only service could implement this
 profile of TSP to provide a simple backward-compatible mode for IPv4-only
 network nodes, without impairing all advantages of being IPv6-only.
@@ -71,11 +72,6 @@ It basically tosses traffic back and forth between these interfaces,
 but not without performing the SECURITY CHECKS desribed below
 on what is tossed at it.
 .SH OPTIONS
-.TP
-\fB\-h\fR
-.TP
-\fB\-\-help\fR
-Print usage information and exit.
 .TP
 \fB\-t\fR \fI/dev/tunX\fR
 .TP
@@ -99,11 +95,16 @@ Bind to the given IPv6 address range through a tunnel device, and
 forward incoming IPv6 messages to IPv4-based UDP tunnel endpoints.
 See ADDRESS FORMAT below for an explanation of the lower half of
 the IPv6 addresses.  Required.
-.PP
+.IP
 If no \fB\-t\fR option is given, a tunnel will be created for the time that
 \fBpubTSP\fR is running, and the \fIv6prefix/64\fR is used as a router address
 on that interface.  Routing table entries will not be setup by \fBpublicTSP\fR,
 nor will the general ablity to forward IPv6 traffic.
+.TP
+\fB\-h\fR
+.TP
+\fB\-\-help\fR
+Print usage information and exit.
 .SH ADDRESS FORMAT
 .PP
 An IPv6 address used from \fBpubTSP\fR reveals the IPv4 address and UDP port
