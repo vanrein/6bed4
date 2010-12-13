@@ -20,20 +20,26 @@ pubtsp \- server-side daemon for public TSP service
 \fB\-h\fR
 .SH DESCRIPTION
 .PP
-TSP, or the Tunnel Setup Protocol, is standardised in RFC 5722.  It defines
+Through a \fBpubTSP\fR daemon, it is possible to make an IPv6 range of
+addresses available to IPv4-only users.  This means that even an IPv4-only
+network can host IPv6-only applications, as long as they can fall back on
+a tunnel based on this profile.
+.PP
+TSP, or the Tunnel Setup Protocol, is documented in RFC 5722.  It defines
 several methods for encapsulating IPv6 traffic in IPv4 packets.  It also
 defines SASL as its generic authentication layer.
 .PP
 This daemon implements a specific profile for the server side of TSP.
 The profile of RFC 5722 implemented by this daemon supports NAT traversal
-for public use.  The idea of this profile is to support IPv6-only devices
-from an IPv4-only network without a need to configure a tunnel.
+for public use.  The purpose of this profile is to provide a fallback
+mode to IPv6-only devices running on an IPv4-only network; the idea is
+to make such a fallback possible without needing to configure a tunnel.
 .PP
-This NAT traversing aspect of this profile is achieved
-by packing IPv6 into UDP and then into IPv4.  This is a
-guaranteed manner of traversing NAT, provided that this daemon listens
-to a public IPv4 address.  The daemon currently does not support any
-other modes of operation.
+The NAT traversing aspect of this profile is needed to support the normal
+openness of IPv6 connections.  This is achieved by packing IPv6 into UDP
+and then into IPv4.  This is a guaranteed manner of traversing NAT,
+provided that this daemon listens to a public IPv4 address.  The daemon
+currently does not support any other modes of operation.
 .PP
 The public-use aspect of this profile means that there is no requirement for
 clients to register.  In terms of SASL, this uses the ANONYMOUS method of
@@ -96,8 +102,8 @@ the IPv6 addresses.  Required.
 .PP
 If no \fB\-t\fR option is given, a tunnel will be created for the time that
 \fBpubTSP\fR is running, and the \fIv6prefix/64\fR is used as a router address
-on that interface.  Routing table entries will not be setup, nor will
-the general ablity to forward IPv6 traffic.
+on that interface.  Routing table entries will not be setup by \fBpublicTSP\fR,
+nor will the general ablity to forward IPv6 traffic.
 .SH ADDRESS FORMAT
 .PP
 An IPv6 address used from \fBpubTSP\fR reveals the IPv4 address and UDP port
@@ -107,7 +113,7 @@ information for traffic from IPv6 to the IPv4 tunnel.
 .PP
 The format of the IPv6 addresses managed by \fBpubTSP\fR are:
 .PP
-\fIv6prefix\fR ... \fIv4addr\fR ... \fIudp-port\fR ... \fIlocalnet\fR
+\fIv6prefix\fR + \fIv4addr\fR + \fIudp-port\fR + \fIlocalnet\fR
 .PP
 In this format, the \fIv6prefix\fR is configured with the \fB\-L\fR option,
 and the \fIv4addr\fR with the \fB\-l\fR option.  The \fIudp-port\fR is noted on
@@ -163,8 +169,32 @@ filtering.
 .PP
 Tunnel commands should adhere to the format of RFC 5722 and may not
 contain any NUL characters.
+.SH BUGS
+Currently, \fBpubTSP\fR does not use ICMP notifications at the IPv4
+level to provide smart feedback to an IPv6 client.  It is undecided
+at this point if this would add value.
+.PP
+To be able to fallback to this TSP profile, an IPv6-only application
+needs to find a \fBpubTSP\fR or similar service.  A general naming
+or numbering scheme is needed to make that straightforward.  The
+\fBpubTSP\fR service could be setup privately and configured in
+individual IPv6-only nodes, but it could accelerate the introduction
+of IPv6-only nodes if this were organised by network providers.
+.PP
+Ideally, \fBpubTSP\fR would be near all heavily connected nodes
+of the Internet.  There, they would improve connectivity without
+being a detour for the traffic.  Alternatively, it would be located
+in various uplinks.  To optimise routing, it is possible to assign
+a fixed IPv4 address and IPv6 prefix for \fBpubTSP\fR running
+anywhere; its stateless operation means that traffic going back and
+forth can go through different instances of \fBpubTSP\fR without
+posing problems.
+.PP
+The \fBpubTSP\fR daemon is a piece of highly efficient code,
+and it should be able to handle very high bandwidths.  A stress
+test has not been conducted yet.
 .SH LICENSE
-Released under GNU Public License version 3.
+Released under a BSD-style license without advertisement clause.
 .SH SEE ALSO
 The 0cpm project is an example of an IPv6-only SIP application
 that can use \fBpubTSP\fR and comparable TSP tunnel services to
@@ -176,7 +206,7 @@ http://0cpm.org/ \- the homepage of the 0cpm project.
 .PP
 http://devel.0cpm.org/pubtsp \- the homepage of \fBpubTSP\fR.
 .PP
-RFC 5722 \- the general specification of TSP, of which \fBpubTSP\fR is
+RFC 5722 \- the authoritative description of TSP, of which \fBpubTSP\fR is
 implements a specific profile for public service under NAT traversal.
 .SH AUTHOR
 \fBpubTSP\fR was written by Rick van Rein from OpenFortress.
