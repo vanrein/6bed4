@@ -1,4 +1,4 @@
-.TH PUBTSP 8 "December 12, 2010"
+.TH 6BED4 8 "Februari 1, 2011"
 .\" Please adjust this date whenever revising the manpage.
 .\"
 .\" Some roff macros, for reference:
@@ -12,29 +12,28 @@
 .\" .sp <n>    insert n+1 empty lines
 .\" for manpage-specific macros, see man(7)
 .SH NAME
-pubtsp \- server-side daemon for public TSP service
+6bed4 \- server-side daemon for 6bed4 service
 .SH SYNOPSYS
-.B pubtsp
+.B 6bed4
 [\fB\-t\fR \fI/dev/tunX\fR] \fB\-l\fR \fIv4addr\fR \fB\-L\fR \fIv6prefix/64\fR
 .PP
-.B pubtsp
-\fB\-h\fR
+.B 6bed4
+[\fB\-h\fR]
 .SH DESCRIPTION
 .PP
-Through a \fBpubTSP\fR daemon, it is possible to make an IPv6 range of
+Through a \fB6bed4\fR daemon, it is possible to make a small range of IPv6
 addresses available to IPv4-only users.  This means that even an IPv4-only
 network can host IPv6-only applications, as long as they can fall back on
 a tunnel based on this profile.
 .PP
-TSP, or the Tunnel Setup Protocol, is documented in RFC 5722.  It defines
-several methods for encapsulating IPv6 traffic in IPv4 packets.  It also
-defines SASL as its generic authentication layer.
-.PP
-This daemon implements a specific profile for the server side of TSP.
-The profile of RFC 5722 implemented by this daemon supports NAT traversal
-for public use.  The purpose of this profile is to provide a fallback
-mode to IPv6-only devices running on an IPv4-only network; the idea is
-to make such a fallback possible without needing to configure a tunnel.
+These tunnels are primarily intended for embedded devices, to assist them
+in instant changeover from being IPv4-only to being IPv6-only.  Given the
+restricted resources in embedded applications, this is likely to improve
+the speed of transitioning to IPv6.  To avoid cluttered access, these
+tunnels should be reserved for resource-hampered devices.  For routers,
+transitioning mechanisms like 6to4 and 6in4 are more suitable.  For
+desktops, tunnelling routers or a direct link to a subscription tunnel
+service is a better solution.
 .PP
 The NAT traversing aspect of this profile is needed to support the normal
 openness of IPv6 connections.  This is achieved by packing IPv6 into UDP
@@ -43,31 +42,30 @@ provided that this daemon listens to a public IPv4 address.  The daemon
 currently does not support any other modes of operation.
 .PP
 The public-use aspect of this profile means that there is no requirement for
-clients to register.  In terms of SASL, this uses the ANONYMOUS method of
-authentication.  However, this does not mean that the use of \fBpubTSP\fR
+clients to register.  However, this does not mean that the use of \fB6bed4\fR
 makes it possible to browse IPv6 networks anonymously; in order to
 ensure traceability of abusive behaviour, the IPv4 address and UDP port
 of the tunnel client are mentioned in the IPv6 address.  See ADDRESS FORMAT
 below for details, and SECURITY CHECKS for further precautions against abuse.
 .PP
-The foreseen application of servers under this profile of TSP are
-IPv6-only services that are accessed from an IPv4-only network.  The pivotal
-point of defining IPv6-only service can be simplicity, or making IPv6
+The intended application of clients under this transitionary mechanism are
+IPv6-only devices that need a transport over an IPv4-only network.  The
+reason for defining IPv6-only device can be simplicity, or making IPv6
 more efficient and/or more useful.  To avoid making IPv6 a breaking
-requirement, clients for such an IPv6-only service could implement this
-profile of TSP to provide a simple backward-compatible mode for IPv4-only
-network nodes, without impairing all advantages of being IPv6-only.
+requirement in roll-outs, devices for such an IPv6-only service could
+implement this mechanism to provide a simple backward-compatible mode for
+IPv4-only network nodes, without impairing all advantages of being IPv6-only.
 .PP
 This daemon is in fact a stateless translation between an IPv4 client
-and the general IPv6 world; the interactions defined by TSP are all
-handled as required by RFC 5722, but some are strictly speaking not
-required for \fBpubTSP\fR.  We emphesise that their specification should still
-be met in all clients, so as to avoid dependency on this one
-implementation of TSP, and/or its current version.
+and the general IPv6 world; to configure an IPv6 address on the tunnel
+client side it will perform autoconfiguration over the tunnel.  The
+assigned prefix will be a /112, with 16 bits of interface identifiers
+to fill in.  The interface identifier 0 is reserved for the router,
+or in other words, the tunnel server.
 .PP
-The implementation listens to a UDP socket on TSP standard port 3653
+The tunnel server implementation listens to a UDP socket on port 3653
 on the IPv4 side, and to a
-tunnel endpoint to capture all traffic matching an IPv6 prefix.
+tunnel endpoint to capture all traffic matching an IPv6 /64 prefix.
 It basically tosses traffic back and forth between these interfaces,
 but not without performing the SECURITY CHECKS desribed below
 on what is tossed at it.
@@ -76,11 +74,11 @@ on what is tossed at it.
 \fB\-t\fR \fI/dev/tunX\fR
 .TP
 \fB\-\-tundev\fR \fI/dev/tunX\fR
-Instead of creating a tunnel for the duration that \fBpubTSP\fR runs,
+Instead of creating a tunnel for the duration that \fB6bed4\fR runs,
 use one that already exists and that has already been setup with
 the proper IPv6 prefix.  This option makes it possible for
-non-root users to run \fBpubTSP\fR.  All that is required is acccess to
-the tunnel device by the user that runs \fBpubTSP\fR.  Optional on Linux.
+non-root users to run \fB6bed4\fR.  All that is required is acccess to
+the tunnel device by the user that runs \fB6bed4\fR.  Optional on Linux.
 .TP
 \fB\-l\fR \fIv4addr\fR
 .TP
@@ -97,7 +95,7 @@ See ADDRESS FORMAT below for an explanation of the lower half of
 the IPv6 addresses.  Required.
 .IP
 If no \fB\-t\fR option is given, a tunnel will be created for the time that
-\fBpubTSP\fR is running, and the \fIv6prefix/64\fR is used as a router address
+\fB6bed4\fR is running, and the \fIv6prefix/64\fR is used as a router address
 on that interface.  Routing table entries will not be setup by \fBpublicTSP\fR,
 nor will the general ablity to forward IPv6 traffic.
 .TP
@@ -107,27 +105,27 @@ nor will the general ablity to forward IPv6 traffic.
 Print usage information and exit.
 .SH ADDRESS FORMAT
 .PP
-An IPv6 address used from \fBpubTSP\fR reveals the IPv4 address and UDP port
+An IPv6 address used from \fB6bed4\fR reveals the IPv4 address and UDP port
 used by the tunnel endpoint.  This format is checked on sending from
 the IPv4 tunnel to IPv6, and used to reconstruct the IPv4 tunnel access
 information for traffic from IPv6 to the IPv4 tunnel.
 .PP
-The format of the IPv6 addresses managed by \fBpubTSP\fR are:
+The format of the IPv6 addresses managed by \fB6bed4\fR are:
 .PP
 \fIv6prefix\fR + \fIv4addr\fR + \fIudp-port\fR + \fIlocalnet\fR
 .PP
 In this format, the \fIv6prefix\fR is configured with the \fB\-L\fR option,
 and the \fIv4addr\fR with the \fB\-l\fR option.  The \fIudp-port\fR is noted on
-arrival of a packet on the IPv4 tunnel side of \fBpubTSP\fR.
+arrival of a packet on the IPv4 tunnel side of \fB6bed4\fR.
 .PP
 The \fIlocalnet\fR defaults to 0, but may be used to differentiate up to
 65,536 different hosts accessible through the same TSP client.  As
-the main application foreseen for \fBpubTSP\fR is to get IPv6-only tools and
+the main application foreseen for \fB6bed4\fR is to get IPv6-only tools and
 devices working on an IPv4-only network, this is not a probable setup,
-but it is nevertheless possible.  The current version of \fBpubTSP\fR does
+but it is nevertheless possible.  The current version of \fB6bed4\fR does
 not actually hand this over as a subnet.
 .PP
-The router address that \fBpubTSP\fR chooses for itself consists of the
+The router address that \fB6bed4\fR chooses for itself consists of the
 \fIv6prefix\fR with zeroes appended; this falls outside the setup above,
 because neither IPv4 addresses nor UDP port numbers are not permitted
 te be zero-valued.
@@ -138,11 +136,11 @@ as specified under SECURITY CHECKS, and then forwarded to \fIudp-port\fR at
 the UDP packet.  The IPv6 addresses are not altered, but only used
 to derive IPv4 contact information.
 .PP
-Outgoing IPv6 traffic arriving on the IPv4 tunnel side of \fBpubTSP\fR will
+Outgoing IPv6 traffic arriving on the IPv4 tunnel side of \fB6bed4\fR will
 be checked to have been sent from the right \fIv6prefix\fR and mention
 the \fIv4addr\fR and \fIudp-port\fR matching the client's public side.  That
 is, NAT may translate the IPv4 address and UDP port used, but these
-parts of the IPv6 address should show how it is forwarded to \fBpubTSP\fR.
+parts of the IPv6 address should show how it is forwarded to \fB6bed4\fR.
 Note that the TSP protocol provides this necessary information at the
 time the TSP tunnel is created.
 .PP
@@ -155,7 +153,7 @@ explicit mapping in NAT overtakes this responsibility of an active
 mapping between the internal and external address space.
 .SH SECURITY CHECKS
 .PP
-Not everything will be passed through \fBpubTSP\fR, even if this would be
+Not everything will be passed through \fB6bed4\fR, even if this would be
 technically possible.  A few security checks are applied to silently
 drop traffic that looks evil.
 .PP
@@ -171,44 +169,44 @@ filtering.
 Tunnel commands should adhere to the format of RFC 5722 and may not
 contain any NUL characters.
 .SH BUGS
-Currently, \fBpubTSP\fR does not use ICMP notifications at the IPv4
+Currently, \fB6bed4\fR does not use ICMP notifications at the IPv4
 level to provide smart feedback to an IPv6 client.  It is undecided
 at this point if this would add value.
 .PP
 To be able to fallback to this TSP profile, an IPv6-only application
-needs to find a \fBpubTSP\fR or similar service.  A general naming
+needs to find a \fB6bed4\fR or similar service.  A general naming
 or numbering scheme is needed to make that straightforward.  The
-\fBpubTSP\fR service could be setup privately and configured in
+\fB6bed4\fR service could be setup privately and configured in
 individual IPv6-only nodes, but it could accelerate the introduction
 of IPv6-only nodes if this were organised by network providers.
 .PP
-Ideally, \fBpubTSP\fR would be near all heavily connected nodes
+Ideally, \fB6bed4\fR would be near all heavily connected nodes
 of the Internet.  There, they would improve connectivity without
 being a detour for the traffic.  Alternatively, it would be located
 in various uplinks.  To optimise routing, it is possible to assign
-a fixed IPv4 address and IPv6 prefix for \fBpubTSP\fR running
+a fixed IPv4 address and IPv6 prefix for \fB6bed4\fR running
 anywhere; its stateless operation means that traffic going back and
-forth can go through different instances of \fBpubTSP\fR without
+forth can go through different instances of \fB6bed4\fR without
 posing problems.
 .PP
-The \fBpubTSP\fR daemon is a piece of highly efficient code,
+The \fB6bed4\fR daemon is a piece of highly efficient code,
 and it should be able to handle very high bandwidths.  A stress
 test has not been conducted yet.
 .SH LICENSE
 Released under a BSD-style license without advertisement clause.
 .SH SEE ALSO
 The 0cpm project is an example of an IPv6-only SIP application
-that can use \fBpubTSP\fR and comparable TSP tunnel services to
+that can use \fB6bed4\fR and comparable TSP tunnel services to
 demonstrate the advantages of IPv6 to end users.  It is also
 a typical example of a transitionary need for something like
-\fBpubTSP\fR.
+\fB6bed4\fR.
 .PP
 http://0cpm.org/ \- the homepage of the 0cpm project.
 .PP
-http://devel.0cpm.org/pubtsp/ \- the homepage of \fBpubTSP\fR.
+http://devel.0cpm.org/6bed4/ \- the homepage of \fB6bed4\fR.
 .PP
-RFC 5722 \- the authoritative description of TSP, of which \fBpubTSP\fR is
+RFC 5722 \- the authoritative description of TSP, of which \fB6bed4\fR is
 implements a specific profile for public service under NAT traversal.
 .SH AUTHOR
-\fBpubTSP\fR was written by Rick van Rein from OpenFortress.
+\fB6bed4\fR was written by Rick van Rein from OpenFortress.
 It was created to support the 0cpm project.
