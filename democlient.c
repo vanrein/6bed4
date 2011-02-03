@@ -82,6 +82,7 @@ char v6prefix [INET6_ADDRSTRLEN];
 const char v6listen_linklocal [16] = { 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
 struct sockaddr_in  v4name;
+struct sockaddr_in  v4peer;
 struct sockaddr_in6 v6name;
 
 struct in6_addr v6listen;
@@ -185,7 +186,9 @@ uint8_t allrouters_linklocal_address [] = {
  * Return 1 on success, 0 on failure.
  */
 int setup_tunnel (void) {
-	v6sox = open ("/dev/net/tun", O_RDWR);
+	if (v6sox == -1) {
+		v6sox = open ("/dev/net/tun", O_RDWR);
+	}
 	if (v6sox == -1) {
 		fprintf (stderr, "%s: Failed to access tunnel driver on /dev/net/tun: %s\n", program, strerror (errno));
 		return 0;
@@ -208,12 +211,34 @@ int setup_tunnel (void) {
 	if (ok && system (cmd) != 0) {
 		ok = 0;
 	}
+	snprintf (cmd, 512, "/sbin/ip -6 route flush dev %s", ifreq.ifr_name);
+	if (ok && system (cmd) != 0) {
+		ok = 0;
+	}
 	snprintf (cmd, 512, "/sbin/ip addr add fe80::1 dev %s scope link", ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
 		ok = 0;
 	}
 	if (* (uint16_t *) v6prefix != htons (0x0000)) {
 		snprintf (cmd, 512, "/sbin/ip -6 addr add %s dev %s", v6prefix, ifreq.ifr_name);
+		if (ok && system (cmd) != 0) {
+			ok = 0;
+		}
+		snprintf (cmd, 512, "/sbin/ip -6 route add %s/112 mtu 1280 dev %s", v6prefix, ifreq.ifr_name);
+		if (ok && system (cmd) != 0) {
+			ok = 0;
+		}
+#if 0
+		snprintf (cmd, 512, "/sbin/ip -6 rule add from %s/112 table 64", v6prefix);
+		if (ok && system (cmd) != 0) {
+			ok = 0;
+		}
+#endif
+		snprintf (cmd, 512, "/sbin/ip -6 route flush table 64");
+		if (ok && system (cmd) != 0) {
+			ok = 0;
+		}
+		snprintf (cmd, 512, "/sbin/ip -6 route add table 64 default via %s dev %s metric 512", v6prefix, ifreq.ifr_name);
 		if (ok && system (cmd) != 0) {
 			ok = 0;
 		}
@@ -429,37 +454,32 @@ void handle_4to6_ngb (ssize_t v4ngbcmdlen) {
 void handle_4to6_payload (ssize_t v4datalen) {
 	//
 	// Ensure that the lower half of the IPv6 sender address is ok
-	if (v4src6->s6_addr32 [2] != v4name.sin_addr.s_addr) {
-		return;
-	}
-	if (v4src6->s6_addr16 [6] != v4name.sin_port) {
-		return;
-	}
 #if 0
-	if (v4src6->s6_addr16 [7] != htons (0x0000)) {
+	if (v4dst6->s6_addr32 [2] != v4peer.sin_addr.s_addr) {
+		return;
+	}
+	if (v4dst6->s6_addr16 [6] != v4peer.sin_port) {
 		return;
 	}
 #endif
+	if (v4dst6->s6_addr16 [7] == htons (0x0000)) {
+		return;
+	}
 	//
 	// Ensure that the top half of the IPv6 address is ok
 	// Note that this implies rejection of ::1/128, fe80::/10 and fec0::/10
-	if (memcmp (v4src6, &v6listen, 8) != 0) {
+	if (memcmp (v4dst6, &v6listen, 8) != 0) {
 		return;
 	}
-	if (v4src6->s6_addr32 [0] != v6listen.s6_addr32 [0]) {
+	if (v4dst6->s6_addr32 [0] != v6listen.s6_addr32 [0]) {
 		return;
 	}
-	if (v4src6->s6_addr32 [1] != v6listen.s6_addr32 [1]) {
+	if (v4dst6->s6_addr32 [1] != v6listen.s6_addr32 [1]) {
 		return;
 	}
 	//
 	// Send the unwrapped IPv6 message out over v6sox
 	memcpy (&v6name.sin6_addr, v4dst6, sizeof (v6name.sin6_addr));
-printf ("Sending IPv6, result = %d\n",
-	sendto (v6sox,
-			&v4data6, sizeof (struct tun_pi) + v4datalen,
-			MSG_DONTWAIT,
-			(struct sockaddr *) &v6name, sizeof (v6name)));
 printf ("Writing IPv6, result = %d\n",
 	write (v6sox, &v4data6, sizeof (struct tun_pi) + v4datalen));
 }
@@ -480,7 +500,7 @@ void handle_4to6 (void) {
 			(struct sockaddr *) &v4name, &adrlen
 		);
 	if (buflen == -1) {
-		printf ("%s: Error receiving IPv4-side package: %s",
+		printf ("%s: Error receiving IPv4-side package: %s\n",
 				program, strerror (errno));
 		return;
 	}
@@ -520,36 +540,32 @@ printf ("Received IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.flags, v6tu
 	//
 	// Ensure that the incoming IPv6 address is properly formatted
 	// Note that this avoids access to ::1/128, fe80::/10, fec0::/10
-	if (memcmp (v6dst6, &v6listen, 8) != 0) {
+	// TODO: v6src6 or v6dst6?!?
+	if (memcmp (v6src6, &v6listen, 8) != 0) {
 		return;
 	}
-	if (v6dst6->s6_addr32 [0] != v6listen.s6_addr32 [0]) {
+	if (v6src6->s6_addr32 [0] != v6listen.s6_addr32 [0]) {
 		return;
 	}
-	if (v6dst6->s6_addr32 [1] != v6listen.s6_addr32 [1]) {
+	if (v6src6->s6_addr32 [1] != v6listen.s6_addr32 [1]) {
 		return;
 	}
-#if 0
-	if (v6dst6->s6_addr16 [7] != htons (0x0000)) {
+	if (v6src6->s6_addr16 [7] == htons (0x0000)) {
 		return;
 	}
-#endif
 	//
 	// Harvest socket address data from destination IPv6, then send
-	v4name.sin_family = AF_INET;
-	v4name.sin_addr.s_addr = v6dst6->s6_addr32 [2];
-	v4name.sin_port = v6dst6->s6_addr16 [6];
+socklen_t v4namelen = sizeof (v4name);
 printf ("Sending IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n",
-((uint8_t *) &v4name.sin_addr.s_addr) [0],
-((uint8_t *) &v4name.sin_addr.s_addr) [1],
-((uint8_t *) &v4name.sin_addr.s_addr) [2],
-((uint8_t *) &v4name.sin_addr.s_addr) [3],
-ntohs (v4name.sin_port),
-	sendto (v4sox,
+((uint8_t *) &v4peer.sin_addr.s_addr) [0],
+((uint8_t *) &v4peer.sin_addr.s_addr) [1],
+((uint8_t *) &v4peer.sin_addr.s_addr) [2],
+((uint8_t *) &v4peer.sin_addr.s_addr) [3],
+ntohs (v4peer.sin_port),
+	send (v4sox,
 			v6data,
 			rawlen - sizeof (struct tun_pi),
-			MSG_DONTWAIT,
-			(struct sockaddr *) &v4name, sizeof (v4name)));
+			MSG_DONTWAIT));
 }
 
 
@@ -651,21 +667,21 @@ int process_args (int argc, char *argv []) {
 				break;
 			}
 			v4server = optarg;
-			if (inet_pton (AF_INET, optarg, &v4name.sin_addr) <= 0) {
+			if (inet_pton (AF_INET, optarg, &v4peer.sin_addr) <= 0) {
 				ok = 0;
 				fprintf (stderr, "%s: Failed to parse IPv4 address %s\n", program, optarg);
 				break;
 			}
-			memcpy (&v4listen, &v4name.sin_addr, 4);
+			memcpy (&v4listen, &v4peer.sin_addr, 4);
 			v4sox = socket (AF_INET, SOCK_DGRAM, 0);
 			if (v4sox == -1) {
 				ok = 0;
 				fprintf (stderr, "%s: Failed to allocate UDPv4 socket: %s\n", program, strerror (errno));
 				break;
 			}
-			if (connect (v4sox, (struct sockaddr *) &v4name, sizeof (v4name)) != 0) {
+			if (connect (v4sox, (struct sockaddr *) &v4peer, sizeof (v4peer)) != 0) {
 				ok = 0;
-				fprintf (stderr, "%s: Failed to bind to UDPv4 %s:%d: %s\n", program, optarg, ntohs (v4name.sin_port), strerror (errno));
+				fprintf (stderr, "%s: Failed to bind to UDPv4 %s:%d: %s\n", program, optarg, ntohs (v4peer.sin_port), strerror (errno));
 				break;
 			}
 			break;
@@ -735,10 +751,13 @@ int main (int argc, char *argv []) {
 	// Initialise
 	program = argv [0];
 	memset (&v4name, 0, sizeof (v4name));
+	memset (&v4peer, 0, sizeof (v4peer));
 	memset (&v6name, 0, sizeof (v6name));
 	v4name.sin_family  = AF_INET ;
+	v4peer.sin_family  = AF_INET ;
 	v6name.sin6_family = AF_INET6;
 	v4name.sin_port = htons (3653); /* TSP standard port */
+	v4peer.sin_port = htons (3653); /* TSP standard port */
 	v4tunpi6.flags = 0;
 	v4tunpi6.proto = htons (ETH_P_IPV6);
 	//
