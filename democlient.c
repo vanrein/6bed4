@@ -182,6 +182,8 @@ uint8_t allrouters_linklocal_address [] = {
 
 #ifdef LINUX
 #define HAVE_SETUP_TUNNEL
+static struct ifreq ifreq;
+static int have_tunnel = 0;
 /* Implement the setup_tunnel() command for Linux.
  * Return 1 on success, 0 on failure.
  */
@@ -194,11 +196,10 @@ int setup_tunnel (void) {
 		return 0;
 	}
 	int ok = 1;
-	static struct ifreq ifreq;
-	static int have_tunnel = 0;
 	if (!have_tunnel) {
 		memset (&ifreq, 0, sizeof (ifreq));
 		ifreq.ifr_flags = IFF_TUN;
+		((uint8_t *) &ifreq.ifr_hwaddr) [5] = 0x01;
 		if (ok && (ioctl (v6sox, TUNSETIFF, (void *) &ifreq) == -1)) {
 			ok = 0;
 		} else {
@@ -207,41 +208,9 @@ int setup_tunnel (void) {
 		ifreq.ifr_name [IFNAMSIZ] = 0;
 	}
 	char cmd [512+1];
-	snprintf (cmd, 512, "/sbin/ip -6 addr flush dev %s", ifreq.ifr_name);
-	if (ok && system (cmd) != 0) {
-		ok = 0;
-	}
-	snprintf (cmd, 512, "/sbin/ip -6 route flush dev %s", ifreq.ifr_name);
-	if (ok && system (cmd) != 0) {
-		ok = 0;
-	}
 	snprintf (cmd, 512, "/sbin/ip addr add fe80::1 dev %s scope link", ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
 		ok = 0;
-	}
-	if (* (uint16_t *) v6prefix != htons (0x0000)) {
-		snprintf (cmd, 512, "/sbin/ip -6 addr add %s dev %s", v6prefix, ifreq.ifr_name);
-		if (ok && system (cmd) != 0) {
-			ok = 0;
-		}
-		snprintf (cmd, 512, "/sbin/ip -6 route add %s/112 mtu 1280 dev %s", v6prefix, ifreq.ifr_name);
-		if (ok && system (cmd) != 0) {
-			ok = 0;
-		}
-#if 0
-		snprintf (cmd, 512, "/sbin/ip -6 rule add from %s/112 table 64", v6prefix);
-		if (ok && system (cmd) != 0) {
-			ok = 0;
-		}
-#endif
-		snprintf (cmd, 512, "/sbin/ip -6 route flush table 64");
-		if (ok && system (cmd) != 0) {
-			ok = 0;
-		}
-		snprintf (cmd, 512, "/sbin/ip -6 route add table 64 default via %s dev %s metric 512", v6prefix, ifreq.ifr_name);
-		if (ok && system (cmd) != 0) {
-			ok = 0;
-		}
 	}
 	snprintf (cmd, 512, "/sbin/ip link set %s up mtu 1280", ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
@@ -249,6 +218,19 @@ int setup_tunnel (void) {
 	}
 	if (!ok) {
 		close (v6sox);	/* This removes the tunnel interface */
+	}
+	return ok;
+}
+int setup_tunnel_address (void) {
+	int ok = have_tunnel;
+	char cmd [512+1];
+	snprintf (cmd, 512, "/sbin/ip -6 addr add %s dev %s", v6prefix, ifreq.ifr_name);
+	if (ok && system (cmd) != 0) {
+		ok = 0;
+	}
+	snprintf (cmd, 512, "/sbin/ip -6 route add %s/112 mtu 1280 dev %s", v6prefix, ifreq.ifr_name);
+	if (ok && system (cmd) != 0) {
+		ok = 0;
 	}
 	return ok;
 }
@@ -400,8 +382,8 @@ void handle_4to6_ngb (ssize_t v4ngbcmdlen) {
 					&v6listen,
 					v6prefix,
 					sizeof (v6prefix));
-				printf ("Assigning address %s to tunnel\n", v6prefix);
-				setup_tunnel ();
+				fprintf (stderr, "Assigning address %s to tunnel\n", v6prefix);
+				setup_tunnel_address ();
 			}
 			rdofs += (v4v6icmpdata [rdofs + 1] << 3);
 		}
@@ -480,7 +462,8 @@ void handle_4to6_payload (ssize_t v4datalen) {
 	//
 	// Send the unwrapped IPv6 message out over v6sox
 	memcpy (&v6name.sin6_addr, v4dst6, sizeof (v6name.sin6_addr));
-printf ("Writing IPv6, result = %d\n",
+// printf ("Writing IPv6, result = %d\n",
+(
 	write (v6sox, &v4data6, sizeof (struct tun_pi) + v4datalen));
 }
 
@@ -536,9 +519,10 @@ void handle_6to4 (void) {
 	if (v6tuncmd.proto != htons (ETH_P_IPV6)) {
 		return;
 	}
-printf ("Received IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.flags, v6tuncmd.proto);
+// printf ("Received IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.flags, v6tuncmd.proto);
 	//
 	// Ensure that the incoming IPv6 address is properly formatted
+#if 0
 	// Note that this avoids access to ::1/128, fe80::/10, fec0::/10
 	// TODO: v6src6 or v6dst6?!?
 	if (memcmp (v6src6, &v6listen, 8) != 0) {
@@ -550,18 +534,20 @@ printf ("Received IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.flags, v6tu
 	if (v6src6->s6_addr32 [1] != v6listen.s6_addr32 [1]) {
 		return;
 	}
+#endif
 	if (v6src6->s6_addr16 [7] == htons (0x0000)) {
 		return;
 	}
 	//
 	// Harvest socket address data from destination IPv6, then send
 socklen_t v4namelen = sizeof (v4name);
-printf ("Sending IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n",
-((uint8_t *) &v4peer.sin_addr.s_addr) [0],
-((uint8_t *) &v4peer.sin_addr.s_addr) [1],
-((uint8_t *) &v4peer.sin_addr.s_addr) [2],
-((uint8_t *) &v4peer.sin_addr.s_addr) [3],
-ntohs (v4peer.sin_port),
+// printf ("Sending IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n",
+// ((uint8_t *) &v4peer.sin_addr.s_addr) [0],
+// ((uint8_t *) &v4peer.sin_addr.s_addr) [1],
+// ((uint8_t *) &v4peer.sin_addr.s_addr) [2],
+// ((uint8_t *) &v4peer.sin_addr.s_addr) [3],
+// ntohs (v4peer.sin_port),
+(
 	send (v4sox,
 			v6data,
 			rawlen - sizeof (struct tun_pi),
@@ -583,12 +569,13 @@ void solicit_routers (void) {
 	int done = 0;
 	int secs = 1;
 	while (!done) {
-printf ("Sending RouterSolicitation-IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n",
-((uint8_t *) &v4name.sin_addr.s_addr) [0],
-((uint8_t *) &v4name.sin_addr.s_addr) [1],
-((uint8_t *) &v4name.sin_addr.s_addr) [2],
-((uint8_t *) &v4name.sin_addr.s_addr) [3],
-ntohs (v4name.sin_port),
+// printf ("Sending RouterSolicitation-IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n",
+// ((uint8_t *) &v4name.sin_addr.s_addr) [0],
+// ((uint8_t *) &v4name.sin_addr.s_addr) [1],
+// ((uint8_t *) &v4name.sin_addr.s_addr) [2],
+// ((uint8_t *) &v4name.sin_addr.s_addr) [3],
+// ntohs (v4name.sin_port),
+(
 		sendto (v4sox,
 				ipv6_router_solicitation,
 				sizeof (ipv6_router_solicitation),
@@ -603,7 +590,7 @@ ntohs (v4name.sin_port),
 			secs <<= 1;
 		}
 	}
-	printf ("Got a response, liberally assuming it is an offer\n");
+	fprintf (stderr, "Got a first messsage, liberally assuming it is an offer\n");
 }
 
 
@@ -628,7 +615,7 @@ void run_daemon (void) {
 		} else {
 			FD_SET (v6sox, &io);
 		}
-fflush (stdout);
+//fflush (stdout);
 	}
 }
 
@@ -772,7 +759,7 @@ int main (int argc, char *argv []) {
 		exit (1);
 	}
 	printf ("\nThis tunnel client is ONLY FOR DEMONSTRATION PURPOSES.\n\nUntil there are plenty of tunnels and tunnel hosting parties agree, it is\nnot permitted to rolll out this application on desktops.  Please acknowledge\nthat by entering the word demonstrate to the following prompt.\n\nExceptions are made for roll-outs on local networks, where the tunnel service\nis used from a non-standard IPv4 address and IPv6 /64 prefix.\n\nType the word from the text to proceed: ");
-	fflush (stdout);
+	//fflush (stdout);
 	char demobuf [100];
 	if (fgets (demobuf, sizeof (demobuf)-1, stdin) == NULL
 	    || strcmp (demobuf, "demonstrate\n") != 0) {
@@ -781,7 +768,7 @@ int main (int argc, char *argv []) {
 	}
 	//
 	// Start the main daemon process
-	solicit_routers ();	// DEMO -- only once
+	//NOTNEEDED:AUTOMATIC// solicit_routers ();	// DEMO -- only once
 	run_daemon ();
 	//
 	// Report successful creation of the daemon

@@ -206,8 +206,9 @@ remainder of the IPv6 destination address.
 
 In doing so, it MUST NOT bypass the comparison of the IPv6 prefix,
 IPv4 address and UDP port as mentioned in the source IPv6 address.
-If this fails, the traffic MUST be treated as traffic trying to pass
-up through the tunnel with an incorrectly set IPv6 address.
+If this comparison fails, the traffic MUST be treated as traffic
+trying to pass up through the tunnel with an incorrectly set
+IPv6 address.
 
 
 Tunnel service profiles
@@ -257,11 +258,35 @@ contact address for the IPv6 /64 prefix, and MAY explain how abuse can
 be traced to IPv4 abusers, in the regional internet registry's whois
 database.
 
-The traffic flowing through the local tunnel server MUST NOT perform
-more tapping than the weakest required form of tapping on the local
-network.  In cases where a local network spans different jurisdictions,
-it is therefore not possible to apply stronger privacy-depriving
-standards to network users that are used to more privacy.
+
+En-route translation profile
+----------------------------
+
+Any public router connected to both IPv4 and IPv6 protocols can perform
+the translations specified in this document.  It could perform this
+function en route, so on traffic that happens to pass through it.  This
+means that the least possible energy and effort is required to support
+IPv6 to the embedded devices targeted by 6bed4.  The vital distinction
+between such a 6bed4 profile and the public tunnel server profile is
+that the translation services are not announced over BGP.
+
+The major advantage of en-route translation is that it avoids any
+diversion of the traffic to a 6bed4 tunnel server.  Instead of routing
+the traffic through an intermediary, it can be kept on the fastest
+route available, which is good for the routing budget of the Internet
+as a whole; furthermore, it can save on the budget of the en-route
+party if it has less need to steer traffic through core routers.
+
+It is possible to perform only one side of this translation en-route;
+a consumer-level ISP might want to support old IPv4-only routers and
+any 6bed4-based devices behind it.  Similarly, a hosting provider
+could offer the service of translating the IPv6 side traffic to IPv4.
+
+An ISP wishing to provide this service to its own network but not to
+the whole world could implement such en-route translation, in order
+
+
+
 
 
 NAT traversal issues
@@ -311,7 +336,34 @@ so it is certainly recommended.
 IANA Issues
 ===========
 
-Well-known IPv4 address, well-known IPv6 /64 prefix, well-known UDP port.
+Well-known IPv4 address, well-known IPv6 /64 prefix.
+Requested: IPv4 address 192.64.64.1/24 and IPv6 prefix 2001:6bed:4:0::/64.
+
+Possibly also, the well-known UDP port.
+Since this port is only bound to a well-known IPv4 address, the port
+could be anything.  We suggest sharing the UDP port for TSP, which is
+3653.
+
+
+Privacy issues
+==============
+
+Tunnel servers can attract traffic, and especially the use of an anycast
+address means that the tunnel service provider is not easily known.
+As a result, there may be privacy issues when the traffic enters a
+jurisdiction that requires more excessive tapping and law enforcement
+than is assumed by communicating partners.
+
+For this reason, in jurisdictions where tapping, inspection and/or
+storage of traffic can be enforced by law, the BGP announcements of either
+or both well-known address prefixes MUST NOT reach jurisdictions where
+more more relaxed tapping requirements exist.
+
+A disadvantage of this requirement is that the use of 6bed4 with its
+well-known addresses is impaired in countries that enforce tapping of
+traffic at the routing level.  The result may be slower performance,
+with a real impact on realtime media exchange.  The economic impact
+that this could have is outside the scope of this specification.
 
 
 Security issues

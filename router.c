@@ -481,17 +481,17 @@ void handle_4to6_ngb (ssize_t v4ngbcmdlen) {
 		//
 		// Validate Neigbour Solicitation
 		if (v4dst6->s6_addr16 [0] == htons (0xff02)) {
-			break;   /* drop */
-		}
-		if (v4src6->s6_addr16 [9] == htons (0x0000)) {
-			// TODO: 24 ---> 24 + bytes_voor_srclinklayaddr
-			if (v4ngbcmdlen != sizeof (struct ip6_hdr) + 24) {
+			if (v4ngbcmdlen != sizeof (struct ip6_hdr) + 24 + 8) {
 				break;   /* drop */
 			}
 		} else {
-			if (v4ngbcmdlen != sizeof (struct ip6_hdr) + 24) {
+			if ((v4ngbcmdlen != sizeof (struct ip6_hdr) + 24) &&
+			    (v4ngbcmdlen != sizeof (struct ip6_hdr) + 24 + 8)) {
 				break;   /* drop */
 			}
+		}
+		if (v4src6->s6_addr16 [0] == htons (0x0000)) {
+			break;   /* drop, we use link-layer addresses */
 		}
 		//
 		// Construct Neigbour Advertisement
