@@ -264,7 +264,7 @@ uint16_t icmp6_checksum (size_t payloadlen) {
  *
  * Actions: v4/udp/v6 src becomes dest, set v4/udp/v6 src, len, cksum, send.
  */
-void icmp6_reply (size_t icmp6bodylen) {
+void icmp6_reply (int v4in, size_t icmp6bodylen) {
 	v4v6hoplimit = 255;
 	if ((icmp6bodylen & 0x07) != 4) {
 		return;   /* illegal length, drop */
@@ -285,7 +285,7 @@ printf ("Sending ICMPv6-IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n",
 ((uint8_t *) &v4name.sin_addr.s_addr) [2],
 ((uint8_t *) &v4name.sin_addr.s_addr) [3],
 ntohs (v4name.sin_port),
-	sendto (v4sox,
+	sendto (v4in,
 			v4data,
 			sizeof (struct ip6_hdr) + 4 + icmp6bodylen,
 			MSG_DONTWAIT,
@@ -421,7 +421,7 @@ printf ("CMD=%s=\n", v4tspcmd);
  * 136	0	Neighbour Advertisement		Ignore
  * 137	0	Redirect			Ignore
  */
-void handle_4to6_ngb (ssize_t v4ngbcmdlen) {
+void handle_4to6_ngb (int v4in, ssize_t v4ngbcmdlen) {
 	uint16_t srclinklayer;
 	//
 	// Ensure that the packet is large enough
@@ -475,23 +475,23 @@ void handle_4to6_ngb (ssize_t v4ngbcmdlen) {
 						// Retrans Timer: max
 		writepos += 2+4+4;
 		writepos = icmp6_prefix (writepos, 0);
-		icmp6_reply (writepos);
+		icmp6_reply (v4in, writepos);
 		break;
 	case ND_NEIGHBOR_SOLICIT:
 		//
 		// Validate Neigbour Solicitation
 		if (v4dst6->s6_addr16 [0] == htons (0xff02)) {
-			break;   /* drop */
-		}
-		if (v4src6->s6_addr16 [9] == htons (0x0000)) {
-			// TODO: 24 ---> 24 + bytes_voor_srclinklayaddr
-			if (v4ngbcmdlen != sizeof (struct ip6_hdr) + 24) {
+			if (v4ngbcmdlen != sizeof (struct ip6_hdr) + 24 + 8) {
 				break;   /* drop */
 			}
 		} else {
-			if (v4ngbcmdlen != sizeof (struct ip6_hdr) + 24) {
+			if ((v4ngbcmdlen != sizeof (struct ip6_hdr) + 24) &&
+			    (v4ngbcmdlen != sizeof (struct ip6_hdr) + 24 + 8)) {
 				break;   /* drop */
 			}
+		}
+		if (v4src6->s6_addr16 [0] == htons (0x0000)) {
+			break;   /* drop, we use link-layer addresses */
 		}
 		//
 		// Construct Neigbour Advertisement
@@ -511,7 +511,7 @@ void handle_4to6_ngb (ssize_t v4ngbcmdlen) {
 		v4v6icmpdata [21] = 1;		// Length: 1x 8 bytes
 		memset (v4v6icmpdata + 22, 0x00, 6); // Link-layer addr is 0
 		// Total length of ICMPv6 body is 28 bytes
-		icmp6_reply (28);
+		icmp6_reply (v4in, 28);
 		break;
 	default:
 		break;   /* drop */
@@ -602,7 +602,7 @@ void handle_4to6 (void) {
 			uint16_t dst = v4src6->s6_addr16 [0];
 			if ((v4dst6->s6_addr16 [0] == htons (0xff02)) ||
 			    (v4dst6->s6_addr16 [0] == htons (0xfe80))) {
-				handle_4to6_ngb (buflen);
+				handle_4to6_ngb (v4sox, buflen);
 			} else {
 				v4v6hoplimit--;
 				handle_4to6_payload (buflen);
@@ -730,7 +730,7 @@ int process_args (int argc, char *argv []) {
 		case 'l':
 			if (v4sox != -1) {
 				ok = 0;
-				fprintf (stderr, "%s: Only one -l argument is permitted\n");
+				fprintf (stderr, "%s: Only one -l argument is permitted\n", program);
 				break;
 			}
 			v4server = optarg;
@@ -755,7 +755,7 @@ int process_args (int argc, char *argv []) {
 		case 'L':
 			if (v6server) {
 				ok = 0;
-				fprintf (stderr, "%s: Only one -L argument is permitted\n");
+				fprintf (stderr, "%s: Only one -L argument is permitted\n", program);
 				break;
 			}
 			char *slash64 = strchr (optarg, '/');
@@ -770,7 +770,7 @@ int process_args (int argc, char *argv []) {
 			v6prefix = optarg;
 			if (!v6server || inet_pton (AF_INET6, v6server, &v6listen) <= 0) {
 				ok = 0;
-				fprintf (stderr, "%s: Failed to parse IPv6 prefix %s\n", optarg);
+				fprintf (stderr, "%s: Failed to parse IPv6 prefix %s\n", program, optarg);
 				break;
 			}
 			if (v6listen.s6_addr32 [2] || v6listen.s6_addr32 [3]) {
@@ -782,7 +782,7 @@ int process_args (int argc, char *argv []) {
 		case 't':
 			if (v6sox != -1) {
 				ok = 0;
-				fprintf (stderr, "%s: Multiple -t arguments are not permitted\n");
+				fprintf (stderr, "%s: Multiple -t arguments are not permitted\n", program);
 				break;
 			}
 			v6sox = open (optarg, O_RDWR);

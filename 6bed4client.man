@@ -1,0 +1,136 @@
+.TH 6BED4CLIENT 8 "Februari 1, 2011"
+.\" Please adjust this date whenever revising the manpage.
+.\"
+.\" Some roff macros, for reference:
+.\" .nh        disable hyphenation
+.\" .hy        enable hyphenation
+.\" .ad l      left justify
+.\" .ad b      justify to both left and right margins
+.\" .nf        disable filling
+.\" .fi        enable filling
+.\" .br        insert line break
+.\" .sp <n>    insert n+1 empty lines
+.\" for manpage-specific macros, see man(7)
+.SH NAME
+6bed4client \- client-side daemon for instant-on IPv6 service
+.SH SYNOPSYS
+.B 6bed4client
+[\fB\-t\fR \fI/dev/tunX\fR] [\fB\-d\fR] [\fB\-f\fR] [\fB\-l\fR \fIv4addr\fR] [\fB\-p\fR \fIport\fR]
+.PP
+.B 6bed4client
+[\fB\-h\fR]
+.SH DESCRIPTION
+.PP
+The \fB6bed4client\fR creates an instant-on, zero-config IPv6
+communication facility.  It is designed to work behind NAT and
+firewalls, and to find the shortest possible route to a communications
+peer.
+.PP
+The command usually works through a 6bed4 interface, often a tunnel,
+through which commands are passed to this daemon, which encapsulates
+the traffic into UDP and IPv4 before sending it.  Return UDP/IPv4
+traffic is decapsulated and offered through the 6bed4 interface.
+.SH OPTIMAL ROUTING
+The \fB6bed4client\fR goes through lengths to achieve optimal routing
+for all packets.  The existence of a public server ensures that
+IPv6 connections are always possible, but anything more direct is
+of course better.
+.PP
+Note that the structure of a 6bed4 IPv6 address is such that it
+reveals a host's public IPv4 address and an external UDP port used
+for the 6bed4 tunneling protocol.  This information can be used to
+derive both local addressing information, as well as remote.  This
+will only work for addresses that start with the standard prefix
+under which 6bed4 addresses are created.
+.PP
+If traffic is intended for the same public IPv4 address as the local
+node, then it is likely to be a host on the same local network.  In
+such cases, a Neighbor Solicitation is sent to the IPv4 all-hosts multicast
+address in an attempt to find a direct route on the LAN.  This may not
+always work, for instance in the presence of subnets without multicast
+forwarding between their segments.
+.PP
+More generally though, a remote peer has an IPv4 address and a UDP
+port over which it once commenced 6bed4 towards the public server,
+to obtain its IPv6 address.  In an attempt to find a direct route,
+the \fB6bed4client\fR will try to find a direct route to that
+endpoint.  If it succeeds to send a Neighbor Solicitation and
+receives back a Neighbor Advertisement, it has established a direct
+channel for IPv6 communications, and it can continue to use that
+instead of going through the public server.
+.PP
+Direct connections to an IPv4/UDP address will only fail if the
+remote system is behind symmetric NAT or a similar firewall.  In
+this case, an initiative from that remote system to contact the
+local system may still succeed, and give rise to a seconde attempt
+towards the remote peer, which should then succeed.  Only if both
+local and remote peers use symmetric NAT, will it be necessary
+to continue to communicate through the public 6bed4 server.
+.PP
+In general, local network traffic is preferred over anything
+else.  Second-best is direct traffic to a public IPv4/UDP address,
+and the public 6bed4 server would be the last resort.
+.SH SPECIAL CASES
+A system with access to native IPv6 can still use 6bed4, although
+it would not want to setup a default route over it.  The use of
+doing this is twofold: At first it unloads the public server from
+having to make the connection, and secondly it makes the connection
+between the local and remote host as direct as is possible over
+IPv4.  The mixed setup of native IPv6 and 6bed4 will not lead to
+any trouble, as 6bed4 traffic is easily recognised by the target
+address prefix, and the interface is setup to handle this.
+.PP
+It is possible to allocate a fixed 6bed4 address for a server, and
+publish it in DNS.  This would be as constant as the IPv4 address
+and UDP port assigned to the \fB6bed4client\fR, but most NAT and
+firewalls support port forwarding; the \fB\-p\fR option on the client
+can be used to support reception of incoming 6bed4 traffic on the
+forwarded port.
+.PP
+
+.SH OPTIONS
+.TP
+\fB\-t\fR \fI/dev/tunX\fR
+.TP
+\fB\-\-tundev\fR \fI/dev/tunX\fR
+Instead of creating a tunnel for the duration that \fB6bed4server\fR runs,
+use one that already exists and that has already been setup with
+the proper IPv6 prefix.  This option makes it possible for
+non-root users to run \fB6bed4server\fR.  All that is required is acccess to
+the tunnel device by the user that runs \fB6bed4server\fR.  Optional on Linux.
+.TP
+\fB\-d\fR
+.TP
+\fB\-\-default\-route\fR
+Create a default route through the 6bed4 interface.  This means that the
+entire IPv6 Internet can be accessed through the 6bed4 interface.  This is
+not setup by default, as 6bed4 might also be used as an add-on interface
+that connects more directly to other 6bed4 hosts.
+.TP
+\fB\-l\fR \fIv4addr\fR
+.TP
+\fB\-\-listen\fR \fIv4addr\fR
+Listen for 6bed4 messages on the specified IPv4 address.  This will also
+be the address from which the traffic is sent.  This setting may be
+used together with \fB\-p\fR to control the daemon's behaviour such that
+it can be the target of a port forwarding setup in NAT or firewall.
+.TP
+\fB\-p\fR \fIport\fR
+.TP
+\fB\-\-port\fR \fIport\fR
+Let the 6bed4 daemon listen to the given UDP port.  This will also be
+the port from which the traffic is sent.  This setting may be used
+together with \fB\-l\fR to control the daemon's behaviour such that it
+can be the target of a port forwarding setup in NAT or firewall.
+.TP
+\fB\-f\fR
+.TP
+\fB\-\-foreground\fR
+.TP
+\fB\-\-fork\-no\fR
+Do not fork to the background.  Instead, stay on the foreground and listen
+to break signals.  This is primarily useful for testing, including while
+rolling out 6bed4 on a site.
+.SH AUTHOR
+\fB6bed4client\fR was written by Rick van Rein from OpenFortress.
+It was created to support the 0cpm project.

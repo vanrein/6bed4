@@ -1,28 +1,17 @@
-/* 6bed4/democlient.c -- IPv6-anywhere demo-only client for 6bed4
+/* 6bed4/client.c -- IPv6-anywhere client for 6bed4
  *
  * This is an implementation of neighbour and router discovery over a
  * tunnel that packs IPv6 inside UDP/IPv4.  This tunnel mechanism is
- * targeted specifically at embedded devices that are to function on
- * any network, including IPv4-only, while being designed as IPv6-only
- * devices with a fallback to this tunnel.
- *
- * Because of the emphasis on embedded devices, this code or derivatives
- * SHOULD NOT be distributed as a desktop application.  Variations are
- * possible for network providers who intend to host IPv6 support as a
- * local network service, available on a non-standard IPv4 address and
- * a non-standard IPv6 /64 prefix.
- *
- * The software is ONLY available for experimentation purposes, and as
- * a foundation for embedded code.  This status will only be changed
- * when the tunnel hosting parties agree that desktop use of their
- * tunnels is permitted.  This may happen when the tunnels are widely
- * spread accross the Internet, like 6to4 is now.
+ * so efficient that the server administrators do not mind if it is
+ * distributed widely.  The server address 145.100.190.242 is
+ * hard-coded into this client code, as it is considered "well-known".
  *
  * From: Rick van Rein <rick@openfortress.nl>
  */
 
 
 #include <stdlib.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <errno.h>
@@ -74,6 +63,7 @@ char *program;
 
 int v4sox = -1;
 int v6sox = -1;
+int v4mcast = -1;
 
 char *v4server = NULL;
 char *v6server = NULL;
@@ -84,6 +74,9 @@ const char v6listen_linklocal [16] = { 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00,
 struct sockaddr_in  v4name;
 struct sockaddr_in  v4peer;
 struct sockaddr_in6 v6name;
+
+struct sockaddr_in v4bind;
+struct sockaddr_in v4allnodes;
 
 struct in6_addr v6listen;
 struct in_addr  v4listen;
@@ -173,6 +166,12 @@ uint8_t allrouters_linklocal_address [] = {
 	0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x02,
 };
 
+bool default_route = false;
+
+bool foreground = false;
+
+bool multicast = true;
+
 
 /*
  *
@@ -182,6 +181,8 @@ uint8_t allrouters_linklocal_address [] = {
 
 #ifdef LINUX
 #define HAVE_SETUP_TUNNEL
+static struct ifreq ifreq;
+static int have_tunnel = 0;
 /* Implement the setup_tunnel() command for Linux.
  * Return 1 on success, 0 on failure.
  */
@@ -194,11 +195,11 @@ int setup_tunnel (void) {
 		return 0;
 	}
 	int ok = 1;
-	static struct ifreq ifreq;
-	static int have_tunnel = 0;
 	if (!have_tunnel) {
 		memset (&ifreq, 0, sizeof (ifreq));
+		strncpy (ifreq.ifr_name, "6bed4", IFNAMSIZ);
 		ifreq.ifr_flags = IFF_TUN;
+		((uint8_t *) &ifreq.ifr_hwaddr) [5] = 0x01;
 		if (ok && (ioctl (v6sox, TUNSETIFF, (void *) &ifreq) == -1)) {
 			ok = 0;
 		} else {
@@ -207,48 +208,36 @@ int setup_tunnel (void) {
 		ifreq.ifr_name [IFNAMSIZ] = 0;
 	}
 	char cmd [512+1];
-	snprintf (cmd, 512, "/sbin/ip -6 addr flush dev %s", ifreq.ifr_name);
-	if (ok && system (cmd) != 0) {
-		ok = 0;
-	}
-	snprintf (cmd, 512, "/sbin/ip -6 route flush dev %s", ifreq.ifr_name);
-	if (ok && system (cmd) != 0) {
-		ok = 0;
-	}
 	snprintf (cmd, 512, "/sbin/ip addr add fe80::1 dev %s scope link", ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
 		ok = 0;
 	}
-	if (* (uint16_t *) v6prefix != htons (0x0000)) {
-		snprintf (cmd, 512, "/sbin/ip -6 addr add %s dev %s", v6prefix, ifreq.ifr_name);
-		if (ok && system (cmd) != 0) {
-			ok = 0;
-		}
-		snprintf (cmd, 512, "/sbin/ip -6 route add %s/112 mtu 1280 dev %s", v6prefix, ifreq.ifr_name);
-		if (ok && system (cmd) != 0) {
-			ok = 0;
-		}
-#if 0
-		snprintf (cmd, 512, "/sbin/ip -6 rule add from %s/112 table 64", v6prefix);
-		if (ok && system (cmd) != 0) {
-			ok = 0;
-		}
-#endif
-		snprintf (cmd, 512, "/sbin/ip -6 route flush table 64");
-		if (ok && system (cmd) != 0) {
-			ok = 0;
-		}
-		snprintf (cmd, 512, "/sbin/ip -6 route add table 64 default via %s dev %s metric 512", v6prefix, ifreq.ifr_name);
-		if (ok && system (cmd) != 0) {
-			ok = 0;
-		}
+	snprintf (cmd, 512, "/sbin/ip link set %s up mtu %d", ifreq.ifr_name, MTU);
+	if (ok && system (cmd) != 0) {
+		ok = 0;
 	}
-	snprintf (cmd, 512, "/sbin/ip link set %s up mtu 1280", ifreq.ifr_name);
+	snprintf (cmd, 512, "/sbin/ip -6 route add 2001:610:188:2001::/64 mtu 1280 dev %s", ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
 		ok = 0;
 	}
 	if (!ok) {
 		close (v6sox);	/* This removes the tunnel interface */
+		v6sox = -1;
+	}
+	return ok;
+}
+int setup_tunnel_address (void) {
+	int ok = have_tunnel;
+	char cmd [512+1];
+	snprintf (cmd, 512, "/sbin/ip -6 addr add %s dev %s", v6prefix, ifreq.ifr_name);
+	if (ok && system (cmd) != 0) {
+		ok = 0;
+	}
+	if (default_route) {
+		snprintf (cmd, 512, "/sbin/ip -6 route add default via fe80:: dev %s", ifreq.ifr_name);
+		if (ok && system (cmd) != 0) {
+			ok = 0;
+		}
 	}
 	return ok;
 }
@@ -289,13 +278,24 @@ uint16_t icmp6_checksum (size_t payloadlen) {
  *
  * Actions: v4/udp/v6 src becomes dest, set v4/udp/v6 src, len, cksum, send.
  */
-void icmp6_reply (size_t icmp6bodylen) {
+void icmp6_reply (int v4in, size_t icmp6bodylen) {
 	size_t v6iphdr_msglen = sizeof (struct ip6_hdr) + sizeof (struct icmp6_hdr) + icmp6bodylen;
 	size_t v4iphdr_msglen = sizeof (struct iphdr) + sizeof (struct udphdr) + v6iphdr_msglen;
 	v4v6hoplimit = 255;
 	icmp6bodylen += 4;
 	icmp6bodylen >>= 3;
 	; //TODO: icmp6 reply construction (src==any => tgt=multicast-node)
+printf ("Sending ICMPv6-IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n",
+((uint8_t *) &v4name.sin_addr.s_addr) [0],
+((uint8_t *) &v4name.sin_addr.s_addr) [1],
+((uint8_t *) &v4name.sin_addr.s_addr) [2],
+((uint8_t *) &v4name.sin_addr.s_addr) [3],
+ntohs (v4name.sin_port),
+	sendto (v4in,
+			v4data,
+			sizeof (struct ip6_hdr) + 4 + icmp6bodylen,
+			MSG_DONTWAIT,
+			(struct sockaddr *) &v4name, sizeof (v4name)));
 }
 
 
@@ -337,7 +337,7 @@ size_t icmp6_prefix (size_t optidx, uint8_t endlife) {
  * 136	0	Neighbour Advertisement		Ignore
  * 137	0	Redirect			Ignore
  */
-void handle_4to6_ngb (ssize_t v4ngbcmdlen) {
+void handle_4to6_ngb (int v4in, struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 	uint16_t srclinklayer;
 	//
 	// Ensure that the packet is large enough
@@ -400,8 +400,8 @@ void handle_4to6_ngb (ssize_t v4ngbcmdlen) {
 					&v6listen,
 					v6prefix,
 					sizeof (v6prefix));
-				printf ("Assigning address %s to tunnel\n", v6prefix);
-				setup_tunnel ();
+				fprintf (stderr, "%s: INFO: Assigning address %s to tunnel\n", program, v6prefix);
+				setup_tunnel_address ();
 			}
 			rdofs += (v4v6icmpdata [rdofs + 1] << 3);
 		}
@@ -438,8 +438,8 @@ void handle_4to6_ngb (ssize_t v4ngbcmdlen) {
 		v4v6icmpdata [20] = 2;		// Type: Target Link-Layer Addr
 		v4v6icmpdata [21] = 1;		// Length: 1x 8 bytes
 		memset (v4v6icmpdata + 22, 0x00, 6); // Link-layer addr is 0
-		// Total length of ICMPv6 body is 28 bytes
-		icmp6_reply (28);
+		// Total length of ICMPv6 body is 28 bytes (add 4: type/code/csum)
+		icmp6_reply (v4in, 28);
 		break;
 	default:
 		break;   /* drop */
@@ -480,27 +480,29 @@ void handle_4to6_payload (ssize_t v4datalen) {
 	//
 	// Send the unwrapped IPv6 message out over v6sox
 	memcpy (&v6name.sin6_addr, v4dst6, sizeof (v6name.sin6_addr));
-printf ("Writing IPv6, result = %d\n",
-	write (v6sox, &v4data6, sizeof (struct tun_pi) + v4datalen));
+// fprintf (stderr, "Writing IPv6, result = %d\n",
+	write (v6sox, &v4data6, sizeof (struct tun_pi) + v4datalen)
+//)
+	;
 }
 
 /* Receive a tunnel package, and route it to either the handler for the
  * tunnel protocol, or to the handler that checks and then unpacks the
  * contained IPv6.
  */
-void handle_4to6 (void) {
+void handle_4to6 (int v4in) {
 	uint8_t buf [1501];
 	ssize_t buflen;
 	socklen_t adrlen = sizeof (v4name);
 	//
 	// Receive IPv4 package, which may be tunneled or a tunnel request
-	buflen = recvfrom (v4sox,
+	buflen = recvfrom (v4in,
 			v4data, sizeof (struct tsphdr) + MTU,
 			MSG_DONTWAIT,
 			(struct sockaddr *) &v4name, &adrlen
 		);
 	if (buflen == -1) {
-		printf ("%s: Error receiving IPv4-side package: %s\n",
+		fprintf (stderr, "%s: WARNING: Error receiving IPv4-side package: %s\n",
 				program, strerror (errno));
 		return;
 	}
@@ -512,7 +514,7 @@ void handle_4to6 (void) {
 		uint16_t dst = v4src6->s6_addr16 [0];
 		if ((v4dst6->s6_addr16 [0] == htons (0xff02)) ||
 		    (v4dst6->s6_addr16 [0] == htons (0xfe80))) {
-			handle_4to6_ngb (buflen);
+			handle_4to6_ngb (v4in, &v4name, buflen);
 		} else {
 			handle_4to6_payload (buflen);
 		}
@@ -536,9 +538,10 @@ void handle_6to4 (void) {
 	if (v6tuncmd.proto != htons (ETH_P_IPV6)) {
 		return;
 	}
-printf ("Received IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.flags, v6tuncmd.proto);
+// fprintf (stderr, "%s: INFO: Received IPv6 data, flags=0x%04x, proto=0x%04x\n", program, v6tuncmd.flags, v6tuncmd.proto);
 	//
 	// Ensure that the incoming IPv6 address is properly formatted
+#if 0
 	// Note that this avoids access to ::1/128, fe80::/10, fec0::/10
 	// TODO: v6src6 or v6dst6?!?
 	if (memcmp (v6src6, &v6listen, 8) != 0) {
@@ -550,22 +553,25 @@ printf ("Received IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.flags, v6tu
 	if (v6src6->s6_addr32 [1] != v6listen.s6_addr32 [1]) {
 		return;
 	}
+#endif
 	if (v6src6->s6_addr16 [7] == htons (0x0000)) {
 		return;
 	}
 	//
 	// Harvest socket address data from destination IPv6, then send
 socklen_t v4namelen = sizeof (v4name);
-printf ("Sending IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n",
-((uint8_t *) &v4peer.sin_addr.s_addr) [0],
-((uint8_t *) &v4peer.sin_addr.s_addr) [1],
-((uint8_t *) &v4peer.sin_addr.s_addr) [2],
-((uint8_t *) &v4peer.sin_addr.s_addr) [3],
-ntohs (v4peer.sin_port),
+// fprintf (stderr, "%s: INFO: Sending IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n", program,
+// ((uint8_t *) &v4peer.sin_addr.s_addr) [0],
+// ((uint8_t *) &v4peer.sin_addr.s_addr) [1],
+// ((uint8_t *) &v4peer.sin_addr.s_addr) [2],
+// ((uint8_t *) &v4peer.sin_addr.s_addr) [3],
+// ntohs (v4peer.sin_port),
 	send (v4sox,
 			v6data,
 			rawlen - sizeof (struct tun_pi),
-			MSG_DONTWAIT));
+			MSG_DONTWAIT)
+//)
+			;
 }
 
 
@@ -583,12 +589,13 @@ void solicit_routers (void) {
 	int done = 0;
 	int secs = 1;
 	while (!done) {
-printf ("Sending RouterSolicitation-IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n",
-((uint8_t *) &v4name.sin_addr.s_addr) [0],
-((uint8_t *) &v4name.sin_addr.s_addr) [1],
-((uint8_t *) &v4name.sin_addr.s_addr) [2],
-((uint8_t *) &v4name.sin_addr.s_addr) [3],
-ntohs (v4name.sin_port),
+// fprintf (stderr, "%s: INFO: Sending RouterSolicitation-IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n", program,
+// ((uint8_t *) &v4name.sin_addr.s_addr) [0],
+// ((uint8_t *) &v4name.sin_addr.s_addr) [1],
+// ((uint8_t *) &v4name.sin_addr.s_addr) [2],
+// ((uint8_t *) &v4name.sin_addr.s_addr) [3],
+// ntohs (v4name.sin_port),
+(
 		sendto (v4sox,
 				ipv6_router_solicitation,
 				sizeof (ipv6_router_solicitation),
@@ -603,7 +610,7 @@ ntohs (v4name.sin_port),
 			secs <<= 1;
 		}
 	}
-	printf ("Got a response, liberally assuming it is an offer\n");
+	fprintf (stderr, "%s: INFO: Got a first messsage, liberally assuming it is an offer\n", program);
 }
 
 
@@ -615,11 +622,14 @@ void run_daemon (void) {
 	FD_ZERO (&io);
 	FD_SET (v4sox, &io);
 	FD_SET (v6sox, &io);
+	if (v4mcast != -1) {
+		FD_SET (v4mcast, &io);
+	}
 	int nfds = (v4sox < v6sox)? (v6sox + 1): (v4sox + 1);
 	while (1) {
 		select (nfds, &io, NULL, NULL, NULL);
 		if (FD_ISSET (v4sox, &io)) {
-			handle_4to6 ();
+			handle_4to6 (v4sox);
 		} else {
 			FD_SET (v4sox, &io);
 		}
@@ -628,18 +638,33 @@ void run_daemon (void) {
 		} else {
 			FD_SET (v6sox, &io);
 		}
-fflush (stdout);
+		if (v4mcast != -1) {
+			if (FD_ISSET (v4mcast, &io)) {
+printf ("WOW: Got multicast input\n");
+				handle_4to6 (v4mcast);
+			} else {
+				FD_SET (v4mcast, &io);
+			}
+		}
+//fflush (stdout);
 	}
 }
 
 
 /* Option descriptive data structures */
 
-char *short_opt = "s:t:h";
+char *short_opt = "s:t:dl:p:fmh";
 
 struct option long_opt [] = {
 	{ "v4server", 1, NULL, 's' },
 	{ "tundev", 1, NULL, 't' },
+	{ "default-route", 0, NULL, 'd' },
+	{ "listen", 1, NULL, 'l' },
+	{ "port", 1, NULL, 'p' },
+	{ "foreground", 0, NULL, 'f' },
+	{ "fork-not", 0, NULL, 'f' },
+	{ "mistrust", 0, NULL, ',' },
+	{ "multicast-not", 0, NULL, 'm' },
 	{ "help", 0, NULL, 'h' },
 	{ NULL, 0, NULL, 0 }	/* Array termination */
 };
@@ -649,8 +674,11 @@ struct option long_opt [] = {
  */
 int process_args (int argc, char *argv []) {
 	int ok = 1;
-	int help = (argc == 1);
+	int help = 0;
 	int done = 0;
+	unsigned long tmpport;
+	char *endarg;
+	default_route = false;
 	while (!done) {
 		switch (getopt_long (argc, argv, short_opt, long_opt, NULL)) {
 		case -1:
@@ -663,8 +691,8 @@ int process_args (int argc, char *argv []) {
 		case 's':
 			if (v4sox != -1) {
 				ok = 0;
-				fprintf (stderr, "%s: Only one -s argument is permitted\n");
-				break;
+				fprintf (stderr, "%s: The -s argument is no longer used -- ignoring\n");
+				continue;
 			}
 			v4server = optarg;
 			if (inet_pton (AF_INET, optarg, &v4peer.sin_addr) <= 0) {
@@ -681,7 +709,7 @@ int process_args (int argc, char *argv []) {
 			}
 			if (connect (v4sox, (struct sockaddr *) &v4peer, sizeof (v4peer)) != 0) {
 				ok = 0;
-				fprintf (stderr, "%s: Failed to bind to UDPv4 %s:%d: %s\n", program, optarg, ntohs (v4peer.sin_port), strerror (errno));
+				fprintf (stderr, "%s: Failed to connect to UDPv4 %s:%d: %s\n", program, optarg, ntohs (v4peer.sin_port), strerror (errno));
 				break;
 			}
 			break;
@@ -698,6 +726,41 @@ int process_args (int argc, char *argv []) {
 				break;
 			}
 			break;
+		case 'd':
+			if (default_route) {
+				fprintf (stderr, "%s: You can only request default route setup once\n", program);
+				exit (1);
+			}
+			default_route = true;
+			break;
+		case 'l':
+			if (inet_pton (AF_INET, optarg, &v4bind.sin_addr.s_addr) != 1) {
+				fprintf (stderr, "%s: IPv4 address %s is not valid\n", program, optarg);
+				exit (1);
+			}
+			break;
+		case 'p':
+			tmpport = strtoul (optarg, &endarg, 10);
+			if ((*endarg) || (tmpport > 65535)) {
+				fprintf (stderr, "%s: UDP port number %s is not valid\n", program, optarg);
+				exit (1);
+			}
+			v4bind.sin_port = htons (tmpport);
+			break;
+		case 'f':
+			if (foreground) {
+				fprintf (stderr, "%s: You can only request foreground operation once\n", program);
+				exit (1);
+			}
+			foreground = true;
+			break;
+		case 'm':
+			if (!multicast) {
+				fprintf (stderr, "%s: You can only request skipping multicast once\n", program);
+				exit (1);
+			}
+			multicast = false;
+			break;
 		default:
 			ok = 0;
 			help = 1;
@@ -712,9 +775,9 @@ int process_args (int argc, char *argv []) {
 	}
 	if (help) {
 #ifdef HAVE_SETUP_TUNNEL
-		fprintf (stderr, "Usage: %s [-t /dev/tunX] -s <v4server>\n       %s -h\n", program, program);
+		fprintf (stderr, "Usage: %s [-d] [-t /dev/tunX]\n       %s -h\n", program, program);
 #else
-		fprintf (stderr, "Usage: %s -t /dev/tunX -s <v4server>\n       %s -h\n", program, program);
+		fprintf (stderr, "Usage: %s [-d] -t /dev/tunX\n       %s -h\n", program, program);
 #endif
 		return 0;
 	}
@@ -756,34 +819,92 @@ int main (int argc, char *argv []) {
 	v4name.sin_family  = AF_INET ;
 	v4peer.sin_family  = AF_INET ;
 	v6name.sin6_family = AF_INET6;
+	// Fixed public server data, IPv4 and UDP:
+	v4server = "145.100.190.242";
+	v4peer.sin_addr.s_addr = htonl ( (145L << 24) | (100L << 16) | (190L << 8) | 242L);
 	v4name.sin_port = htons (3653); /* TSP standard port */
 	v4peer.sin_port = htons (3653); /* TSP standard port */
 	v4tunpi6.flags = 0;
 	v4tunpi6.proto = htons (ETH_P_IPV6);
+	memcpy (&v4listen, &v4peer.sin_addr, 4);
+	//
+	// Create socket for normal outgoing (and return) 6bed4 traffic
+	v4sox = socket (AF_INET, SOCK_DGRAM, 0);
+	if (v4sox == -1) {
+		fprintf (stderr, "%s: Failed to open a local IPv4 socket -- does your system still support IPv4?\n", program);
+		exit (1);
+	}
+	memset (&v4bind, 0, sizeof (v4bind));
+	v4bind.sin_family = AF_INET;
 	//
 	// Parse commandline arguments
 	if (!process_args (argc, argv)) {
 		exit (1);
 	}
 	//
-	// Inform the user about the DEMO-ONLY status of this tool
-	if (!isatty (fileno (stdin)) || !isatty (fileno (stdout))) {
-		fprintf (stderr, "This tool can only be started with terminal I/O\n");
-		exit (1);
+	// Bind to the IPv4 all-nodes local multicast address
+	memset (&v4allnodes, 0, sizeof (v4allnodes));
+	v4allnodes.sin_family = AF_INET;
+	v4allnodes.sin_port = htons (3653); /* TSP standard port */
+	v4allnodes.sin_addr.s_addr = htonl ( (224L << 24) | 1L );
+	if (multicast) {
+		v4mcast = socket (AF_INET, SOCK_DGRAM, 0);
+		if (v4mcast != -1) {
+			if (bind (v4mcast, (struct sockaddr *) &v4allnodes, sizeof (v4allnodes)) != 0) {
+				close (v4mcast);
+				v4mcast = -1;
+				fprintf (stderr, "%s: WARNING: No LAN bypass: Failed to bind to IPv4 all-nodes\n", program);
+#if 0
+			} else if (listen (v4mcast, 10) != 0) {
+				close (v4mcast);
+				v4mcast = -1;
+				fprintf (stderr, "%s: WARNING: No LAN bypass: Failed to listen to IPv4 all-nodes\n", program);
+#endif
+			}
+		}
+	} else {
+		fprintf (stderr, "%s: INFO: No LAN bypass: Not desired\n");
 	}
-	printf ("\nThis tunnel client is ONLY FOR DEMONSTRATION PURPOSES.\n\nUntil there are plenty of tunnels and tunnel hosting parties agree, it is\nnot permitted to rolll out this application on desktops.  Please acknowledge\nthat by entering the word demonstrate to the following prompt.\n\nExceptions are made for roll-outs on local networks, where the tunnel service\nis used from a non-standard IPv4 address and IPv6 /64 prefix.\n\nType the word from the text to proceed: ");
-	fflush (stdout);
-	char demobuf [100];
-	if (fgets (demobuf, sizeof (demobuf)-1, stdin) == NULL
-	    || strcmp (demobuf, "demonstrate\n") != 0) {
-		fprintf (stderr, "Please read the instructions and try again.\n");
+	//
+	// If port and/or listen arguments were provided, bind to them
+	if ((v4bind.sin_addr.s_addr != INADDR_ANY) || (v4bind.sin_port != 0)) {
+		if (bind (v4sox, (struct sockaddr *) &v4bind, sizeof (v4bind)) != 0) {
+			fprintf (stderr, "%s: Failed to bind to local socket -- did you specify both address and port?\n", program);
+			exit (1);
+		}
+	}
+	//
+	// Setup connection to the public server
+	if (connect (v4sox, (struct sockaddr *) &v4peer, sizeof (v4peer)) != 0) {
+		fprintf (stderr, "%s: Failed to connect over UDPv4: %s\n", program, strerror (errno));
 		exit (1);
 	}
 	//
-	// Start the main daemon process
-	solicit_routers ();	// DEMO -- only once
-	run_daemon ();
+	// Run the daemon
+	if (foreground) {
+		solicit_routers ();	// Instead of IPv6 stack
+		run_daemon ();
+	} else {
+		if (setsid () != -1) {
+			fprintf (stderr, "%s: Failure to detach from parent session: %s\n", program, strerror (errno));
+			exit (1);
+		}
+		switch (fork ()) {
+		case -1:
+			fprintf (stderr, "%s: Failure to fork daemon process: %s\n", program, strerror (errno));
+			exit (1);
+		case 0:
+			close (0);
+			close (1);
+			close (2);
+			solicit_routers ();	// Instead of IPv6 stack
+			run_daemon ();
+			break;
+		default:
+			break;
+		}
+	}
 	//
 	// Report successful creation of the daemon
-	return 0;
+	exit (0);
 }
