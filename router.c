@@ -28,6 +28,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdbool.h>
+
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
@@ -52,13 +54,11 @@
 #include <linux/if_ether.h>
 
 
-struct tsphdr {
-	uint32_t seqnum;
-	uint32_t timestamp;
-};
+/* The following will initially fail, due to an IANA obligation to avoid
+ * default builds with non-standard options.
+ */
+#include "nonstd.h"
 
-
-#define TUNNEL_CAPABILITIES "CAPABILITY TUNNEL=V6UDPV4 AUTH=ANONYMOUS"
 
 #define MTU 1280
 
@@ -82,12 +82,16 @@ char *v4server = NULL;
 char *v6server = NULL;
 char *v6prefix = NULL;
 
-const char v6listen_linklocal [16] = { 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+const uint8_t v6listen_linklocal [16] = { 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+uint8_t v6listen_linklocal_complete [16] = { 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+uint8_t lladdr_6bed4 [6];
 
 struct sockaddr_in  v4name;
 struct sockaddr_in6 v6name;
 
 struct in6_addr v6listen;
+struct in6_addr v6listen_complete;
 struct in_addr  v4listen;
 
 
@@ -95,13 +99,8 @@ struct {
 	struct tun_pi tun;
 	union {
 		struct {
-			struct tsphdr tsp;
-			uint8_t cmd [MTU];
-			uint8_t zerobyte;
-		} cdata;
-		struct {
 			struct ip6_hdr v6hdr;
-			uint8_t data [MTU];
+			uint8_t data [MTU - sizeof (struct ip6_hdr)];
 		} idata;
 		struct {
 			struct ip6_hdr v6hdr;
@@ -112,8 +111,6 @@ struct {
 
 #define v4tunpi6 	( v4data6.tun)
 #define v4data		((uint8_t *) &v4data6.udata)
-#define v4tsphdr	(&v4data6.udata.cdata.tsp)
-#define v4tspcmd	(v4data6.udata.cdata.cmd)
 #define v4hdr6		(&v4data6.udata.idata.v6hdr)
 #define v4src6		(&v4data6.udata.idata.v6hdr.ip6_src)
 #define v4dst6		(&v4data6.udata.idata.v6hdr.ip6_dst)
@@ -128,12 +125,15 @@ struct {
 #define v4v6icmpcode	( v4data6.udata.ndata.v6icmphdr.icmp6_code)
 #define v4v6icmpcksum	( v4data6.udata.ndata.v6icmphdr.icmp6_cksum)
 
+#define v4ngbsoltarget	(&v4data6.udata.ndata.v6icmphdr.icmp6_data8 [4])
+
 
 struct {
 	struct tun_pi tun;
 	union {
 		uint8_t data [MTU];
 		struct ip6_hdr v6hdr;
+		struct icmp6_hdr v6icmp;
 	} udata;
 	uint8_t zero;
 } v6data6;
@@ -144,6 +144,9 @@ struct {
 #define v6src6		(&v6data6.udata.v6hdr.ip6_src)
 #define v6dst6		(&v6data6.udata.v6hdr.ip6_dst)
 #define v6hoplimit	( v6data6.udata.v6hdr.ip6_hops)
+
+#define v6nexthdr	( v6data6.udata.v6hdr.ip6_nxt)
+#define v6icmptype	( v6data6.udata.v6icmp.icmp6_type)
 
 
 uint8_t router_linklocal_address [] = {
@@ -183,7 +186,7 @@ int setup_tunnel (void) {
 	int ok = 1;
 	struct ifreq ifreq;
 	memset (&ifreq, 0, sizeof (ifreq));
-	strncpy (ifreq.ifr_name, "6bed4", IFNAMSIZ);
+	strncpy (ifreq.ifr_name, "6bed4_rfc", IFNAMSIZ);
 	ifreq.ifr_flags = IFF_TUN;
 	if (ok && (ioctl (v6sox, TUNSETIFF, (void *) &ifreq) == -1)) {
 		ok = 0;
@@ -216,25 +219,9 @@ int setup_tunnel (void) {
 
 /*
  *
- * Command functions
+ * Utility functions
  *
  */
-
-
-/* Send a reply to a tunnel command back to the most recent sender.
- * This is a textual protocol, so reply is a NUL-terminated string
- * and "\r\n" will be postfixed.
- */
-void tspcmd_reply (char *reply) {
-	if (reply != (char *) v4tspcmd) {
-		strncpy (v4tspcmd, reply, MTU-1);
-	} else {
-		v4tspcmd [MTU-1] = 0;
-	}
-	strncat (v4tspcmd, "\r\n", MTU+1);
-printf ("Reply =%s=\n", v4tspcmd);
-	sendto (v4sox, v4data, sizeof (struct tsphdr) + strlen (v4tspcmd),			MSG_DONTWAIT, (struct sockaddr *) &v4name, sizeof (v4name));
-}
 
 
 /* Calculate the ICMPv6 checksum field
@@ -262,18 +249,20 @@ uint16_t icmp6_checksum (size_t payloadlen) {
  * the incoming message.  The parameter indicates how many bytes the
  * ICMPv6 package counts after the ICMPv6 header.  It must be 4 (mod 8).
  *
- * Actions: v4/udp/v6 src becomes dest, set v4/udp/v6 src, len, cksum, send.
+ * Actions: v4/udp src becomes dest, set v4/udp/v6 src, len, cksum, send.
+ *          v6 dest is provided (usually v4src6) but if it starts with
+ *	    0x00,0x00 it will be replaced with allnodes_linklocal_address.
  */
-void icmp6_reply (size_t icmp6bodylen) {
+void icmp6_reply (size_t icmp6bodylen, struct in6_addr *dest) {
 	v4v6hoplimit = 255;
 	if ((icmp6bodylen & 0x07) != 4) {
 		return;   /* illegal length, drop */
 	}
 	v4v6plen = htons (icmp6bodylen + 4);
-	if ((* (uint16_t *) v4src6) == htons (0x0000)) {
+	if ((* (uint16_t *) dest) == htons (0x0000)) {
 		memcpy (v4dst6, allnodes_linklocal_address, 16);
 	} else {
-		memcpy (v4dst6, v4src6, 16);
+		memcpy (v4dst6, dest, 16);
 	}
 	memcpy (v4src6, router_linklocal_address, 16);
 	v4v6icmpcksum = icmp6_checksum (ntohs (v4v6plen));
@@ -301,8 +290,8 @@ ntohs (v4name.sin_port),
 size_t icmp6_prefix (size_t optidx, uint8_t endlife) {
 	v4v6icmpdata [optidx++] = 3;	// Type
 	v4v6icmpdata [optidx++] = 4;	// Length
-	v4v6icmpdata [optidx++] = 112;	// This is a /112 prefix
-	v4v6icmpdata [optidx++] = 0x40;	// L=0, A=1, Reserved1=0
+	v4v6icmpdata [optidx++] = 64;	// This is a /64 prefix
+	v4v6icmpdata [optidx++] = 0xc0;	// L=1, A=1, Reserved1=0
 	memset (v4v6icmpdata + optidx, endlife? 0x00: 0xff, 8);
 	optidx += 8;
 					// Valid Lifetime: Zero / Infinite
@@ -310,104 +299,104 @@ size_t icmp6_prefix (size_t optidx, uint8_t endlife) {
 	memset (v4v6icmpdata + optidx, 0, 4);
 	optidx += 4;
 					// Reserved2=0
-	memcpy (v4v6icmpdata + optidx +  0, &v6listen, 8);
-	memcpy (v4v6icmpdata + optidx +  8, &v4name.sin_addr, 4);
-	memcpy (v4v6icmpdata + optidx + 12, &v4name.sin_port, 2);
-	memset (v4v6icmpdata + optidx + 14, 0,                2);
-					// Set IPv6 /112 prefix
+	memcpy (v4v6icmpdata + optidx + 0, &v6listen, 8);
+	memset (v4v6icmpdata + optidx + 8, 0, 8);
 	optidx += 16;
 	return optidx;
 }
 
 
-/* Send an info message, in response to a creation request on the
- * tunnel.  The contents of this message are constant, in support of
- * the stateless implementation of this daemon.  The address and port
- * of the IPv4 sender are taken into account, but the information sent
- * over XML is not.
+/*
+ * TODO: DEPRECATED
+ *
+ * Append a Destination Link-Layer Address Option to an ICMPv6
+ * message.  The address is comprised from the remote's UDP port
+ * and IPv4 address, as seen by the router.  They are supplied
+ * in that order, in network byte order.  The resulting address
+ * is 6 bytes, but even though that makes it look like a MAC
+ * address, it really is another beast.
+ * Note that no effort is made in the router to recognise the
+ * "illegal port number" 0x3333 -- the client needs a message
+ * and will recognise it and act on it.
  */
-void tspcmd_create (void) {
-	char v4client [INET_ADDRSTRLEN];
-	char v6client [INET6_ADDRSTRLEN+1];
-	inet_ntop (AF_INET, &v4name.sin_addr, v4client, sizeof (v4client));
-	snprintf (v6client, sizeof (v6client)-1,
-		"%x:%x:%x:%x:%x:%x:%x::",
-			ntohs (v6listen.s6_addr16 [0]),
-			ntohs (v6listen.s6_addr16 [1]),
-			ntohs (v6listen.s6_addr16 [2]),
-			ntohs (v6listen.s6_addr16 [3]),
-			ntohl (v4name.sin_addr.s_addr) >> 16,
-			ntohl (v4name.sin_addr.s_addr) & 0x0000ffff,
-			ntohs (v4name.sin_port));
-	snprintf (v4tspcmd, MTU-1,
-"Content-length: 0000\r\n"
-"200 OK\r\n"
-"<tunnel action=\"info\" type=\"v6udpv4\" lifetime=\"86400\">\r\n"
-"  <server>\r\n"
-"    <address type=\"ipv4\">%s</address>\r\n"
-"    <address type=\"ipv6\">%s</address>\r\n"
-"  </server>\r\n"
-"  <client>\r\n"
-"    <address type=\"ipv4\">%s</address>\r\n"
-"    <address type=\"ipv6\">%s</address>\r\n"
-"    <keepalive interval=\"30\">\r\n"
-"      <address type=\"ipv6\">%s</address>\r\n"
-"    </keepalive>\r\n"
-"  </client>\r\n"
-"</tunnel>"
-		, v4server, v6server, v4client, v6client, v6server);
-	char contlen [6];
-	snprintf (contlen, 5, "%04d", strlen (v4tspcmd) - 22);
-printf ("strlen = %d, contlen = \"%s\"\n", strlen (v4tspcmd), contlen);
-	memcpy (v4tspcmd + 16, contlen, 4);
-	tspcmd_reply (v4tspcmd);
+size_t icmp6_dest_linkaddr (size_t optidx) {
+	uint8_t typelen [2] = { ND_OPT_DESTINATION_LINKADDR, 1 };
+	memcpy (v4v6icmpdata + optidx + 0, &typelen, 2);
+	v4v6icmpdata [optidx + 2] = ntohs (v4name.sin_port) % 256;
+	v4v6icmpdata [optidx + 3] = ntohs (v4name.sin_port) / 256;
+	memcpy (v4v6icmpdata + optidx + 4, &v4name.sin_addr, 4);
+	optidx += 8;
+	return optidx;
 }
 
 
-/* Handle the IPv4 message pointed at by msg as a tunnel command.
+/*
+ * Test if the provided IPv6 address matches the prefix used for 6bed4.
  */
-void handle_4to6_tspcmd (ssize_t v4tspcmdlen) {
-	//
-	// Tunnel data is textual, append '\0' and ensure that's all
-	v4tspcmd [v4tspcmdlen] = 0;
-	if (strlen (v4tspcmd) != v4tspcmdlen) {
-		// Tricky package contains '\0' -- drop silently
-		return;
+static inline bool prefix_6bed4 (struct in6_addr *ip6) {
+	return memcmp (&v6listen, ip6->s6_addr, 8) == 0;
+}
+
+
+/*
+ * Validate the originator's IPv6 address.  It should match the
+ * UDP/IPv4 coordinates of the receiving 6bed4 socket.  Also,
+ * the /64 prefix must match that of v6listen.
+ */
+bool validate_originator (struct sockaddr_in *sin, struct in6_addr *ip6) {
+	uint16_t port = ntohs (sin->sin_port);
+	uint32_t addr = ntohl (sin->sin_addr.s_addr);
+	if (!prefix_6bed4 (ip6)) {
+		return false;
 	}
-	//
-	// Handle VERSION= interaction
-printf ("CMD=%s=\n", v4tspcmd);
-	if (strncmp (v4tspcmd, "VERSION=", 8) == 0) {
-		if (strcmp (v4tspcmd + 8, "2.0.0\r\n") == 0) {
-			tspcmd_reply (TUNNEL_CAPABILITIES);
-		} else {
-			tspcmd_reply ("302 Unsupported client version");
-		}
+	if ((port % 256) != (ip6->s6_addr [8] ^ 0x02)) {
+		return false;
 	}
-	//
-	// Handle AUTHENTICATE command
-	else if (strncmp (v4tspcmd, "AUTHENTICATE ", 13) == 0) {
-		if (strcmp (v4tspcmd + 13, "ANONYMOUS\r\n") == 0) {
-			tspcmd_reply ("200 Success\r\n");
-		} else {
-			tspcmd_reply ("300 Only ANONYMOUS authentication supported");
-		}
+	if ((port / 256) != ip6->s6_addr [9]) {
+		return false;
 	}
-	//
-	// Handle XML prefixed with "content-length:"
-	else if (strncasecmp (v4tspcmd, "content-length:", 15) == 0) {
-		// Hoping to get away with not parsing XML:
-		if (strstr (v4tspcmd, "create")) {
-			tspcmd_create ();
-		} else {
-			tspcmd_reply ("200 Success");
-		}
+	if ((addr >> 24) != ip6->s6_addr [10]) {
+		return false;
 	}
-	//
-	// Reject any further commands loudly
-	else {
-		tspcmd_reply ("310 Go away");
+	if ((addr & 0x00ffffff) != (htonl (ip6->s6_addr32 [3]) & 0x00ffffff)) {
+		return false;
 	}
+	return true;
+}
+
+
+/*
+ * Major packet processing functions
+ */
+
+
+/*
+ * Respond to a Router Solicitation received over the 6bed4 Network.
+ */
+void handle_6bed4_router_solicit (void) {
+	struct in6_addr observed;
+	v4v6icmptype = ND_ROUTER_ADVERT;
+	v4v6icmpdata [0] = 0;			// Cur Hop Limit: unspec
+	v4v6icmpdata [1] = 0x18;		// M=0, O=0
+						// H=0, Prf=11=Low
+						// Reserved=0
+// TODO: wire says 0x44 for router_adv.flags
+	size_t writepos = 2;
+	memset (v4v6icmpdata+writepos, 0xff, 2+4+4);
+					// Router Lifetime: max, 18.2h
+					// Reachable Time: max
+					// Retrans Timer: max
+	writepos += 2+4+4;
+	writepos = icmp6_prefix (writepos, 0);
+	//TODO:DEPRECATED// writepos = icmp6_dest_linkaddr (writepos);
+	memcpy (&observed, v6listen_linklocal, 8);
+	observed.s6_addr [8] = htons (v4name.sin_port) % 256 ^ 0x02;
+	observed.s6_addr [9] = htons (v4name.sin_port) / 256;
+	memcpy (&observed.s6_addr32 [3], &v4name.sin_addr, 4);
+	observed.s6_addr [10] = observed.s6_addr [12];
+	observed.s6_addr [11] = 0xff;
+	observed.s6_addr [12] = 0xfe;
+	icmp6_reply (writepos, &observed);
 }
 
 
@@ -421,23 +410,17 @@ printf ("CMD=%s=\n", v4tspcmd);
  * 136	0	Neighbour Advertisement		Ignore
  * 137	0	Redirect			Ignore
  */
-void handle_4to6_ngb (ssize_t v4ngbcmdlen) {
+void handle_4to6_nd (ssize_t v4ngbcmdlen) {
 	uint16_t srclinklayer;
-	//
-	// Ensure that the packet is large enough
 	if (v4ngbcmdlen < sizeof (struct ip6_hdr) + sizeof (struct icmp6_hdr)) {
 		return;
 	}
-	//
-	// Ensure that the packet is an ICMPv6 packet is otherwise okay
-	if (v4v6nexthdr != IPPROTO_ICMPV6 || v4v6icmpcode != 0 || v4v6hoplimit < 255) {
+	if (v4v6icmpcode != 0) {
 		return;
 	}
 	if (icmp6_checksum (v4ngbcmdlen - sizeof (struct ip6_hdr)) != v4v6icmpcksum) {
 		return;
 	}
-	//
-	// TODO? Ensure that the packet hops indicate that it is local traffic
 	//
 	// Approved.  Perform neighbourly courtesy.
 	switch (v4v6icmptype) {
@@ -461,37 +444,23 @@ void handle_4to6_ngb (ssize_t v4ngbcmdlen) {
 			break;   /* illegal length, drop */
 		}
 		//
-		// Construct Router Advertisement
-		v4v6icmptype = ND_ROUTER_ADVERT;
-		v4v6icmpdata [0] = 0;			// Cur Hop Limit: unspec
-		v4v6icmpdata [1] = 0x18;		// M=0, O=0
-							// H=0, Prf=11
-							// Reserved=0
-// TODO: wire says 0x44 for router_adv.flags
-		size_t writepos = 2;
-		memset (v4v6icmpdata+writepos, 0xff, 2+4+4);
-						// Router Lifetime: max, 18.2h
-						// Reachable Time: max
-						// Retrans Timer: max
-		writepos += 2+4+4;
-		writepos = icmp6_prefix (writepos, 0);
-		icmp6_reply (writepos);
+		// Having accepted the Router Advertisement, respond
+		handle_6bed4_router_solicit ();
 		break;
 	case ND_NEIGHBOR_SOLICIT:
 		//
 		// Validate Neigbour Solicitation
-		if (v4dst6->s6_addr16 [0] == htons (0xff02)) {
-			break;   /* drop */
+		if (!validate_originator (&v4name, v4src6)) {
+			break;	/* bad source address, drop */
 		}
-		if (v4src6->s6_addr16 [9] == htons (0x0000)) {
-			// TODO: 24 ---> 24 + bytes_voor_srclinklayaddr
-			if (v4ngbcmdlen != sizeof (struct ip6_hdr) + 24) {
-				break;   /* drop */
-			}
-		} else {
-			if (v4ngbcmdlen != sizeof (struct ip6_hdr) + 24) {
-				break;   /* drop */
-			}
+		if ((v4ngbcmdlen != sizeof (struct ip6_hdr) + 24) &&
+		    (v4ngbcmdlen != sizeof (struct ip6_hdr) + 24 + 8)) {
+			break;   /* funny length, drop */
+		}
+		if ((memcmp (v4ngbsoltarget, v6listen_linklocal, 16) != 0) &&
+                    (memcmp (v4ngbsoltarget, v6listen_linklocal_complete, 16) != 0) &&
+                    (memcmp (v4ngbsoltarget, &v6listen_complete, 16) != 0)) {
+			break;	/* target not known here, drop */
 		}
 		//
 		// Construct Neigbour Advertisement
@@ -500,66 +469,57 @@ void handle_4to6_ngb (ssize_t v4ngbcmdlen) {
 		v4v6icmpdata [1] =
 		v4v6icmpdata [2] =
 		v4v6icmpdata [3] = 0x00;	// R=1, S=1, O=1, Reserved=0
-		memcpy (v4v6icmpdata +  4, &v6listen, 8);        // prefix /64
-		memcpy (v4v6icmpdata + 12, &v4name.sin_addr, 4); // IPv4
-		memcpy (v4v6icmpdata + 16, &v4name.sin_port, 2); // UDPport
-		v4v6icmpdata [18] =
-		v4v6icmpdata [19] = 0x00;			 // router if-id
+		memcpy (v4v6icmpdata +  4, &v6listen_complete, 16);
 		// Append option: the target link-layer address
 		// Note: wire does not include target link-layer address
 		v4v6icmpdata [20] = 2;		// Type: Target Link-Layer Addr
 		v4v6icmpdata [21] = 1;		// Length: 1x 8 bytes
-		memset (v4v6icmpdata + 22, 0x00, 6); // Link-layer addr is 0
-		// Total length of ICMPv6 body is 28 bytes
-		icmp6_reply (28);
+		memcpy (v4v6icmpdata + 22, lladdr_6bed4, 6);
+		icmp6_reply (28, v4src6);	// 28 is the ICMPv6 response length
 		break;
-	default:
+	case ND_ROUTER_ADVERT:
+	case ND_NEIGHBOR_ADVERT:
+	case ND_REDIRECT:
 		break;   /* drop */
 	}
 }
 
 
-/* Handle the IPv4 message pointed at by msg, checking if the IPv4:port
- * data matches the lower half of the IPv6 sender address.  Drop silently
- * if this is not the case.  TODO: or send ICMP?
+/* 
+ * Forward a message received over the 6bed4 Network over IPv6.
+ * Note that existing checksums will work well, as only the
+ * Hop Limit has been altered, and this is not part of the
+ * checksum calculations.
  */
-void handle_4to6_payload (ssize_t v4datalen) {
-	//
-	// Ensure that the lower half of the IPv6 sender address is ok
-	if (v4src6->s6_addr32 [2] != v4name.sin_addr.s_addr) {
-		return;
-	}
-	if (v4src6->s6_addr16 [6] != v4name.sin_port) {
-		return;
-	}
-#if 0
-	if (v4src6->s6_addr16 [7] != htons (0x0000)) {
-		return;
-	}
-#endif
-	//
-	// Ensure that the top half of the IPv6 address is ok
-	// Note that this implies rejection of ::1/128, fe80::/10 and fec0::/10
-	if (memcmp (v4src6, &v6listen, 8) != 0) {
-		return;
-	}
-	if (v4src6->s6_addr32 [0] != v6listen.s6_addr32 [0]) {
-		return;
-	}
-	if (v4src6->s6_addr32 [1] != v6listen.s6_addr32 [1]) {
-		return;
-	}
-	//
-	// Send the unwrapped IPv6 message out over v6sox
-	memcpy (&v6name.sin6_addr, v4dst6, sizeof (v6name.sin6_addr));
-printf ("Sending IPv6, result = %d\n",
-	sendto (v6sox,
-			&v4data6, sizeof (struct tun_pi) + v4datalen,
-			MSG_DONTWAIT,
-			(struct sockaddr *) &v6name, sizeof (v6name)));
+void handle_4to6_plain_unicast (ssize_t v4datalen) {
 printf ("Writing IPv6, result = %d\n",
 	write (v6sox, &v4data6, sizeof (struct tun_pi) + v4datalen));
 }
+
+
+/*
+ * Forward a 6bed4 message to another 6bed4 destination address.
+ * Note that existing checksums will work well, as only the
+ * Hop Limit has been altered, and this is not part of the
+ * checksum calculations.
+ */
+void relay_6bed4_plain_unicast (ssize_t v4datalen, struct in6_addr *ip6) {
+	v4name.sin_port = htons (ip6->s6_addr [9] << 8 | ip6->s6_addr [8] ^ 0x02);
+	uint8_t *addr = (uint8_t *) &v4name.sin_addr.s_addr;
+	addr [0] = ip6->s6_addr [10];
+	memcpy (addr + 1, ip6->s6_addr + 13, 3);
+printf ("Relaying over 6bed4 Network to %d.%d.%d.%d:%d, result = %d\n",
+((uint8_t *) &v4name.sin_addr.s_addr) [0],
+((uint8_t *) &v4name.sin_addr.s_addr) [1],
+((uint8_t *) &v4name.sin_addr.s_addr) [2],
+((uint8_t *) &v4name.sin_addr.s_addr) [3],
+ntohs (v4name.sin_port),
+	sendto (v4sox,
+			v4data, v4datalen,
+			MSG_DONTWAIT,
+			(struct sockaddr *) &v4name, sizeof (v4name)));
+}
+
 
 /* Receive a tunnel package, and route it to either the handler for the
  * tunnel protocol, or to the handler that checks and then unpacks the
@@ -572,7 +532,7 @@ void handle_4to6 (void) {
 	//
 	// Receive IPv4 package, which may be tunneled or a tunnel request
 	buflen = recvfrom (v4sox,
-			v4data, sizeof (struct tsphdr) + MTU,
+			v4data, MTU,
 			MSG_DONTWAIT,
 			(struct sockaddr *) &v4name, &adrlen
 		);
@@ -581,36 +541,45 @@ void handle_4to6 (void) {
 				program, strerror (errno));
 		return;
 	}
-	if (buflen < sizeof (struct tsphdr)) {
+	if (buflen < sizeof (struct ip6_hdr)) {
 		return;
 	}
-	if (v4v6hoplimit <= 1) {
-		// TODO: Send back an ICMPv6 error message
+	if ((v4data [0] & 0xf0) != 0x60) {
+		// Not an IPv6 packet
 		return;
 	}
-	int flag = v4data [0] & 0xf0;
-	switch (flag) {
-	case 0xf0:
-		/* Handle as a tunnel command package */
-		if (buflen > sizeof (struct tsphdr) + 1) {
-			handle_4to6_tspcmd (buflen - sizeof (struct tsphdr));
+	//
+	// Handle the tunneled IPv6 package (dependent on its class)
+	if ((v4v6nexthdr == IPPROTO_ICMPV6) &&
+			(v4v6icmptype >= 133) && (v4v6icmptype <= 137)) {
+		//
+		// Not Plain: Router Adv/Sol, Neighbor Adv/Sol, Redirect
+		if (v4v6hoplimit != 255) {
+			return;
 		}
-		return;
-	case 0x60:
-		/* Handle as a tunneled IPv6 package */
-		if (buflen > sizeof (struct ip6_hdr) + 1) {
-			uint16_t dst = v4src6->s6_addr16 [0];
-			if ((v4dst6->s6_addr16 [0] == htons (0xff02)) ||
-			    (v4dst6->s6_addr16 [0] == htons (0xfe80))) {
-				handle_4to6_ngb (buflen);
-			} else {
-				v4v6hoplimit--;
-				handle_4to6_payload (buflen);
+		handle_4to6_nd (buflen);
+	} else if ((v4dst6->s6_addr [0] != 0xff) && !(v4dst6->s6_addr [8] & 0x01)) {
+		//
+		// Plain Unicast
+		if (validate_originator (&v4name, v4src6)) {
+			if (v4v6hoplimit-- <= 1) {
+				return;
 			}
+			if (prefix_6bed4 (v4dst6)) {
+				relay_6bed4_plain_unicast (buflen, v4dst6);
+			} else {
+				handle_4to6_plain_unicast (buflen);
+			}
+		} else if (prefix_6bed4 (v4src6)) {
+			// The sender must not have kept NAT/firewall holes
+			// open and should be instructed about a change in
+			// its 6bed4 Link-Local Address.
+			handle_6bed4_router_solicit ();
 		}
-		return;
-	default:
-		/* Silently ignore wrong types of packages */
+	} else {
+		//
+		// Plain Multicast
+		//OPTIONAL// validate_originator, hoplimit, relay_mcast.
 		return;
 	}
 }
@@ -624,52 +593,36 @@ void handle_6to4 (void) {
 	// Receive the IPv6 package and ensure a consistent size
 	size_t rawlen = read (v6sox, &v6data6, sizeof (v6data6));
 	if (rawlen == -1) {
-		return;
+		return;		/* error reading, drop */
 	}
 	if (rawlen < sizeof (struct tun_pi) + sizeof (struct ip6_hdr) + 1) {
-		return;
+		return;		/* too small, drop */
+	}
+	if (v6tuncmd.proto != htons (ETH_P_IPV6)) {
+		return;		/* no IPv6, drop */
+	}
+	if ((v6nexthdr == IPPROTO_ICMPV6) &&
+			(v6icmptype >= 133) && (v6icmptype <= 137)) {
+		return;		/* not plain IPv6, drop */
 	}
 	if (v6hoplimit-- <= 1) {
 		// TODO: Send back an ICMPv6 error message
-		return;
+		return;		/* hop limit exceeded, drop */
 	}
-	if (v6tuncmd.proto != htons (ETH_P_IPV6)) {
-		return;
+	if ((v6dst6->s6_addr [0] == 0xff) /* TODO:UDP_PORT_NOT_YET_FORCED_TO_EVEN || (v6dst6->s6_addr [8] & 0x01) */ ) {
+		//OPTIONAL// handle_6to4_plain_multicast ()
+		return;		/* multicast, drop */
 	}
-printf ("Received IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.flags, v6tuncmd.proto);
+printf ("Received plain unicast IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.flags, v6tuncmd.proto);
 	//
 	// Ensure that the incoming IPv6 address is properly formatted
 	// Note that this avoids access to ::1/128, fe80::/10, fec0::/10
 	if (memcmp (v6dst6, &v6listen, 8) != 0) {
 		return;
 	}
-	if (v6dst6->s6_addr32 [0] != v6listen.s6_addr32 [0]) {
-		return;
-	}
-	if (v6dst6->s6_addr32 [1] != v6listen.s6_addr32 [1]) {
-		return;
-	}
-#if 0
-	if (v6dst6->s6_addr16 [7] != htons (0x0000)) {
-		return;
-	}
-#endif
 	//
 	// Harvest socket address data from destination IPv6, then send
-	v4name.sin_family = AF_INET;
-	v4name.sin_addr.s_addr = v6dst6->s6_addr32 [2];
-	v4name.sin_port = v6dst6->s6_addr16 [6];
-printf ("Sending IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n",
-((uint8_t *) &v4name.sin_addr.s_addr) [0],
-((uint8_t *) &v4name.sin_addr.s_addr) [1],
-((uint8_t *) &v4name.sin_addr.s_addr) [2],
-((uint8_t *) &v4name.sin_addr.s_addr) [3],
-ntohs (v4name.sin_port),
-	sendto (v4sox,
-			v6data,
-			rawlen - sizeof (struct tun_pi),
-			MSG_DONTWAIT,
-			(struct sockaddr *) &v4name, sizeof (v4name)));
+	relay_6bed4_plain_unicast (rawlen - sizeof (struct tun_pi), v6dst6);
 }
 
 
@@ -730,7 +683,7 @@ int process_args (int argc, char *argv []) {
 		case 'l':
 			if (v4sox != -1) {
 				ok = 0;
-				fprintf (stderr, "%s: Only one -l argument is permitted\n");
+				fprintf (stderr, "%s: Only one -l argument is permitted\n", program);
 				break;
 			}
 			v4server = optarg;
@@ -755,7 +708,7 @@ int process_args (int argc, char *argv []) {
 		case 'L':
 			if (v6server) {
 				ok = 0;
-				fprintf (stderr, "%s: Only one -L argument is permitted\n");
+				fprintf (stderr, "%s: Only one -L argument is permitted\n", program);
 				break;
 			}
 			char *slash64 = strchr (optarg, '/');
@@ -770,7 +723,7 @@ int process_args (int argc, char *argv []) {
 			v6prefix = optarg;
 			if (!v6server || inet_pton (AF_INET6, v6server, &v6listen) <= 0) {
 				ok = 0;
-				fprintf (stderr, "%s: Failed to parse IPv6 prefix %s\n", optarg);
+				fprintf (stderr, "%s: Failed to parse IPv6 prefix %s\n", program, optarg);
 				break;
 			}
 			if (v6listen.s6_addr32 [2] || v6listen.s6_addr32 [3]) {
@@ -782,7 +735,7 @@ int process_args (int argc, char *argv []) {
 		case 't':
 			if (v6sox != -1) {
 				ok = 0;
-				fprintf (stderr, "%s: Multiple -t arguments are not permitted\n");
+				fprintf (stderr, "%s: Multiple -t arguments are not permitted\n", program);
 				break;
 			}
 			v6sox = open (optarg, O_RDWR);
@@ -851,7 +804,7 @@ int main (int argc, char *argv []) {
 	memset (&v6name, 0, sizeof (v6name));
 	v4name.sin_family  = AF_INET ;
 	v6name.sin6_family = AF_INET6;
-	v4name.sin_port = htons (3653); /* TSP standard port */
+	v4name.sin_port = htons (UDP_PORT_6BED4);   /* 6BED4 standard port */
 	v4tunpi6.flags = 0;
 	v4tunpi6.proto = htons (ETH_P_IPV6);
 	//
@@ -860,7 +813,34 @@ int main (int argc, char *argv []) {
 		exit (1);
 	}
 	//
+	// Setup a few addresses for later comparison/reproduction
+	//  * lladdr_6bed4 is the 6bed4 Link-Local Address
+	//  * v6listen_complete is the router's full IPv6 address (with if-id)
+	//  * v6listen_linklocal_complete is fe80::/64 plus the router's if-id
+	// A few others have already been setup at this time
+	//  * v6listen is the router's 6bed4 prefix ending in 64 zero bits
+	//  * v6listen_linklocal is the address fe80::/128
+	//
+	lladdr_6bed4 [0] = UDP_PORT_6BED4 % 256;
+	lladdr_6bed4 [1] = UDP_PORT_6BED4 / 256;
+	memcpy (lladdr_6bed4 + 2, (uint8_t *) &v4name.sin_addr, 4);
+	memcpy (&v6listen_complete, &v6listen, 8);
+	v6listen_complete.s6_addr [8] = lladdr_6bed4 [0] ^ 0x02;
+	v6listen_complete.s6_addr [9] =  lladdr_6bed4 [1];
+	v6listen_complete.s6_addr [10] =  lladdr_6bed4 [2];
+	v6listen_complete.s6_addr [11] = 0xff;
+	v6listen_complete.s6_addr [12] = 0xfe;
+	memcpy (&v6listen_complete.s6_addr [13], lladdr_6bed4 + 3, 3);
+	memcpy (v6listen_linklocal_complete, v6listen_linklocal, 8);
+	memcpy (v6listen_linklocal_complete + 8, &v6listen_complete.s6_addr [8], 8);
+printf ("LISTEN lladdr_6bed4 = %02x:%02x:%02x:%02x:%02x:%02x\n", lladdr_6bed4 [0], lladdr_6bed4 [1], lladdr_6bed4 [2], lladdr_6bed4 [3], lladdr_6bed4 [4], lladdr_6bed4 [5]);
+printf ("LISTEN v6listen = %x:%x:%x:%x:%x:%x:%x:%x\n", htons (v6listen.s6_addr16 [0]), htons (v6listen.s6_addr16 [1]), htons (v6listen.s6_addr16 [2]), htons (v6listen.s6_addr16 [3]), htons (v6listen.s6_addr16 [4]), htons (v6listen.s6_addr16 [5]), htons (v6listen.s6_addr16 [6]), htons (v6listen.s6_addr16 [7]));
+printf ("LISTEN v6listen_complete = %x:%x:%x:%x:%x:%x:%x:%x\n", htons (v6listen_complete.s6_addr16 [0]), htons (v6listen_complete.s6_addr16 [1]), htons (v6listen_complete.s6_addr16 [2]), htons (v6listen_complete.s6_addr16 [3]), htons (v6listen_complete.s6_addr16 [4]), htons (v6listen_complete.s6_addr16 [5]), htons (v6listen_complete.s6_addr16 [6]), htons (v6listen_complete.s6_addr16 [7]));
+printf ("LISTEN v6listen_linklocal = %x:%x:%x:%x:%x:%x:%x:%x\n", htons (((uint16_t *) v6listen_linklocal) [0]), htons (((uint16_t *) v6listen_linklocal) [1]), htons (((uint16_t *) v6listen_linklocal) [2]), htons (((uint16_t *) v6listen_linklocal) [3]), htons (((uint16_t *) v6listen_linklocal) [4]), htons (((uint16_t *) v6listen_linklocal) [5]), htons (((uint16_t *) v6listen_linklocal) [6]), htons (((uint16_t *) v6listen_linklocal) [7]));
+printf ("LISTEN v6listen_linklocal_complete = %x:%x:%x:%x:%x:%x:%x:%x\n", htons (((uint16_t *) v6listen_linklocal_complete) [0]), htons (((uint16_t *) v6listen_linklocal_complete) [1]), htons (((uint16_t *) v6listen_linklocal_complete) [2]), htons (((uint16_t *) v6listen_linklocal_complete) [3]), htons (((uint16_t *) v6listen_linklocal_complete) [4]), htons (((uint16_t *) v6listen_linklocal_complete) [5]), htons (((uint16_t *) v6listen_linklocal_complete) [6]), htons (((uint16_t *) v6listen_linklocal_complete) [7]));
+	//
 	// Start the main daemon process
+#ifdef SKIP_TESTING_KLUDGE_IN_FOREGROUND
 	switch (fork ()) {
 	case -1:		/* Error forking */
 		fprintf (stderr, "%s: Failed to fork: %s\n", program, strerror (errno));
@@ -877,6 +857,9 @@ int main (int argc, char *argv []) {
 		close (v6sox);
 		break;
 	}
+#else
+	run_daemon ();
+#endif
 	//
 	// Report successful creation of the daemon
 	return 0;

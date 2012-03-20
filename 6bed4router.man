@@ -12,16 +12,16 @@
 .\" .sp <n>    insert n+1 empty lines
 .\" for manpage-specific macros, see man(7)
 .SH NAME
-6bed4 \- server-side daemon for 6bed4 service
+6bed4server \- server-side daemon for 6bed4 service
 .SH SYNOPSYS
-.B 6bed4
+.B 6bed4server
 [\fB\-t\fR \fI/dev/tunX\fR] \fB\-l\fR \fIv4addr\fR \fB\-L\fR \fIv6prefix/64\fR
 .PP
-.B 6bed4
+.B 6bed4server
 [\fB\-h\fR]
 .SH DESCRIPTION
 .PP
-Through a \fB6bed4\fR daemon, it is possible to make a small range of IPv6
+Through a \fB6bed4server\fR daemon, it is possible to make a small range of IPv6
 addresses available to IPv4-only users.  This means that even an IPv4-only
 network can host IPv6-only applications, as long as they can fall back on
 a tunnel based on this profile.
@@ -42,7 +42,7 @@ provided that this daemon listens to a public IPv4 address.  The daemon
 currently does not support any other modes of operation.
 .PP
 The public-use aspect of this profile means that there is no requirement for
-clients to register.  However, this does not mean that the use of \fB6bed4\fR
+clients to register.  However, this does not mean that the use of \fB6bed4server\fR
 makes it possible to browse IPv6 networks anonymously; in order to
 ensure traceability of abusive behaviour, the IPv4 address and UDP port
 of the tunnel client are mentioned in the IPv6 address.  See ADDRESS FORMAT
@@ -74,17 +74,17 @@ on what is tossed at it.
 \fB\-t\fR \fI/dev/tunX\fR
 .TP
 \fB\-\-tundev\fR \fI/dev/tunX\fR
-Instead of creating a tunnel for the duration that \fB6bed4\fR runs,
+Instead of creating a tunnel for the duration that \fB6bed4server\fR runs,
 use one that already exists and that has already been setup with
 the proper IPv6 prefix.  This option makes it possible for
-non-root users to run \fB6bed4\fR.  All that is required is acccess to
-the tunnel device by the user that runs \fB6bed4\fR.  Optional on Linux.
+non-root users to run \fB6bed4server\fR.  All that is required is acccess to
+the tunnel device by the user that runs \fB6bed4server\fR.  Optional on Linux.
 .TP
 \fB\-l\fR \fIv4addr\fR
 .TP
 \fB\-\-v4listen\fR \fIv4addr\fR
-Bind to the given local IPv4 address and listen for incoming TSP
-tunnel commands and packaged-IPv6 traffic.  Required.
+Bind to the given local IPv4 address and listen for incoming IPv6
+neighbour discovery packages as well as general IPv6 traffic.  Required.
 .TP
 \fB\-L\fR \fIv6prefix/64\fR
 .TP
@@ -95,8 +95,8 @@ See ADDRESS FORMAT below for an explanation of the lower half of
 the IPv6 addresses.  Required.
 .IP
 If no \fB\-t\fR option is given, a tunnel will be created for the time that
-\fB6bed4\fR is running, and the \fIv6prefix/64\fR is used as a router address
-on that interface.  Routing table entries will not be setup by \fBpublicTSP\fR,
+\fB6bed4server\fR is running, and the \fIv6prefix/64\fR is used as a router address
+on that interface.  Routing table entries will not be setup by \fB6bed4server\fR,
 nor will the general ablity to forward IPv6 traffic.
 .TP
 \fB\-h\fR
@@ -105,30 +105,29 @@ nor will the general ablity to forward IPv6 traffic.
 Print usage information and exit.
 .SH ADDRESS FORMAT
 .PP
-An IPv6 address used from \fB6bed4\fR reveals the IPv4 address and UDP port
+An IPv6 address used from \fB6bed4server\fR reveals the IPv4 address and UDP port
 used by the tunnel endpoint.  This format is checked on sending from
 the IPv4 tunnel to IPv6, and used to reconstruct the IPv4 tunnel access
 information for traffic from IPv6 to the IPv4 tunnel.
 .PP
-The format of the IPv6 addresses managed by \fB6bed4\fR are:
+The format of the IPv6 addresses managed by \fB6bed4server\fR are:
 .PP
-\fIv6prefix\fR + \fIv4addr\fR + \fIudp-port\fR + \fIlocalnet\fR
+\fIv6prefix\fR + \fIv4addr\fR + \fIudp-port\fR + \fIinterfaceidentifier\fR
 .PP
 In this format, the \fIv6prefix\fR is configured with the \fB\-L\fR option,
 and the \fIv4addr\fR with the \fB\-l\fR option.  The \fIudp-port\fR is noted on
-arrival of a packet on the IPv4 tunnel side of \fB6bed4\fR.
+arrival of a packet on the IPv4 tunnel side of \fB6bed4server\fR.
 .PP
-The \fIlocalnet\fR defaults to 0, but may be used to differentiate up to
-65,536 different hosts accessible through the same TSP client.  As
-the main application foreseen for \fB6bed4\fR is to get IPv6-only tools and
-devices working on an IPv4-only network, this is not a probable setup,
-but it is nevertheless possible.  The current version of \fB6bed4\fR does
-not actually hand this over as a subnet.
+The \fIinterfaceidentifier\fR is always 0 on the router side, and may be set
+to other values to distinguish 65,535 different client addresses.  As
+the main application foreseen for \fB6bed4server\fR is to get IPv6-only tools and
+devices working on an IPv4-only network, it is very likely that the clients
+will pick a fixed \fIinterfaceidentifier\fR such as 1 and hard-code it.
 .PP
-The router address that \fB6bed4\fR chooses for itself consists of the
-\fIv6prefix\fR with zeroes appended; this falls outside the setup above,
-because neither IPv4 addresses nor UDP port numbers are not permitted
-te be zero-valued.
+Due to the IPv6 practice of assigning link-local names composed of \fBfe80::\fR
+and the \fIinterfaceidentifier\fR, the router-side of a tunnel can always
+be addressed as \fBfe80::0\fR and clients can be found at addresses ranging
+from \fBfe80::1\fR to \fBfe80::ffff\fR.
 .PP
 Incoming IPv6 traffic destined for a serviced address is first checked
 as specified under SECURITY CHECKS, and then forwarded to \fIudp-port\fR at
@@ -136,16 +135,20 @@ as specified under SECURITY CHECKS, and then forwarded to \fIudp-port\fR at
 the UDP packet.  The IPv6 addresses are not altered, but only used
 to derive IPv4 contact information.
 .PP
-Outgoing IPv6 traffic arriving on the IPv4 tunnel side of \fB6bed4\fR will
+Outgoing IPv6 traffic arriving on the IPv4 tunnel side of \fB6bed4server\fR will
 be checked to have been sent from the right \fIv6prefix\fR and mention
 the \fIv4addr\fR and \fIudp-port\fR matching the client's public side.  That
 is, NAT may translate the IPv4 address and UDP port used, but these
-parts of the IPv6 address should show how it is forwarded to \fB6bed4\fR.
-Note that the TSP protocol provides this necessary information at the
-time the TSP tunnel is created.
+parts of the IPv6 address should show how it is forwarded to \fB6bed4server\fR.
+Note that autonegotiation protocol provides this necessary information at the
+time the 6bed4server daemon starts.  If the NAT mapping changes during the uptime
+of the tunnel, a new Router Advertisement is sent from tunnel server to
+client, to notify it of the new prefix to use.  The original message is
+then discarded.
 .PP
-It is recommended to keep NAT state in tact by regularly sending over
-the UDP port to the tunnel endpoint.  At the very least, a regular
+If it is desired to keep the same IPv6 address for longer periods, it
+is recommended that the client keeps NAT state intact by regularly
+sending over the UDP port to the tunnel endpoint.  For example, a regular
 ping could do that.  Alternatively, a client-mode only daemon could
 ensure that it is sending regularly during the times that an outside
 party might wish to send to it.  This is under the assumption that no
@@ -153,7 +156,7 @@ explicit mapping in NAT overtakes this responsibility of an active
 mapping between the internal and external address space.
 .SH SECURITY CHECKS
 .PP
-Not everything will be passed through \fB6bed4\fR, even if this would be
+Not everything will be passed through \fB6bed4server\fR, even if this would be
 technically possible.  A few security checks are applied to silently
 drop traffic that looks evil.
 .PP
@@ -169,44 +172,47 @@ filtering.
 Tunnel commands should adhere to the format of RFC 5722 and may not
 contain any NUL characters.
 .SH BUGS
-Currently, \fB6bed4\fR does not use ICMP notifications at the IPv4
+Currently, \fB6bed4server\fR does not use ICMP notifications at the IPv4
 level to provide smart feedback to an IPv6 client.  It is undecided
 at this point if this would add value.
 .PP
 To be able to fallback to this TSP profile, an IPv6-only application
-needs to find a \fB6bed4\fR or similar service.  A general naming
+needs to find a \fB6bed4server\fR or similar service.  A general naming
 or numbering scheme is needed to make that straightforward.  The
-\fB6bed4\fR service could be setup privately and configured in
+\fB6bed4server\fR service could be setup privately and configured in
 individual IPv6-only nodes, but it could accelerate the introduction
 of IPv6-only nodes if this were organised by network providers.
 .PP
-Ideally, \fB6bed4\fR would be near all heavily connected nodes
+Ideally, \fB6bed4server\fR would be near all heavily connected nodes
 of the Internet.  There, they would improve connectivity without
 being a detour for the traffic.  Alternatively, it would be located
 in various uplinks.  To optimise routing, it is possible to assign
-a fixed IPv4 address and IPv6 prefix for \fB6bed4\fR running
+a fixed IPv4 address and IPv6 prefix for \fB6bed4server\fR running
 anywhere; its stateless operation means that traffic going back and
-forth can go through different instances of \fB6bed4\fR without
+forth can go through different instances of \fB6bed4server\fR without
 posing problems.
 .PP
-The \fB6bed4\fR daemon is a piece of highly efficient code,
+The \fB6bed4server\fR daemon is a piece of highly efficient code,
 and it should be able to handle very high bandwidths.  A stress
 test has not been conducted yet.
+.PP
+This daemon does not pass on QoS headers as it should according to the
+specification.
 .SH LICENSE
 Released under a BSD-style license without advertisement clause.
 .SH SEE ALSO
 The 0cpm project is an example of an IPv6-only SIP application
-that can use \fB6bed4\fR and comparable TSP tunnel services to
+that can use \fB6bed4server\fR and comparable TSP tunnel services to
 demonstrate the advantages of IPv6 to end users.  It is also
 a typical example of a transitionary need for something like
-\fB6bed4\fR.
+\fB6bed4server\fR.
 .PP
 http://0cpm.org/ \- the homepage of the 0cpm project.
 .PP
 http://devel.0cpm.org/6bed4/ \- the homepage of \fB6bed4\fR.
 .PP
-RFC 5722 \- the authoritative description of TSP, of which \fB6bed4\fR is
+RFC 5722 \- the authoritative description of TSP, of which \fB6bed4\fR
 implements a specific profile for public service under NAT traversal.
 .SH AUTHOR
-\fB6bed4\fR was written by Rick van Rein from OpenFortress.
+\fB6bed4server\fR was written by Rick van Rein from OpenFortress.
 It was created to support the 0cpm project.
