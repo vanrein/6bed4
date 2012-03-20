@@ -1194,7 +1194,27 @@ void handle_6to4_nd (ssize_t pktlen) {
 		} else if (memcmp (v6ndtarget, &v6listen, 16) == 0) {
 			return;		/* yes you are unique, drop */
 		} else if (memcmp (v6ndtarget, v6listen_linklocal, 8) == 0) {
-			return; //TODO// Construct response for fe80::/64
+			//
+			// Construct response for fe80::/64
+			v6icmp6type = ND_NEIGHBOR_ADVERT;
+			v6icmp6data [0] = 0x60;	/* Solicited, Override */
+			v6icmp6data [20] = 2;	/* Target Link-Layer Address */
+			v6icmp6data [21] = 1;	/* Length is 1x 8 bytes */
+			v6icmp6data [22] = v6icmp6data [12] ^ 0x02;
+			v6icmp6data [23] = v6icmp6data [13];
+			v6icmp6data [24] = v6icmp6data [14];
+			v6icmp6data [25] = v6icmp6data [17];
+			v6icmp6data [26] = v6icmp6data [18];
+			v6icmp6data [27] = v6icmp6data [19];
+			v6plen = htons (4 + 28);
+			memcpy (v6dst6, v6src6, 16);
+			memcpy (v6src6, &v6listen, 16);
+			memcpy (v6ether.h_dest, v6ether.h_source, 6);
+			memcpy (v6ether.h_source, v6lladdr, 6);
+			v6icmp6csum = icmp6_checksum ((uint8_t *) v6hdr6, 4 + 28);
+syslog (LOG_DEBUG, "Sending trivial reply to fe80::/64 type query\n");
+			write (v6sox, &v6data6, sizeof (struct ethhdr) + sizeof (struct ip6_hdr) + 4 + 28);
+			return;
 		} else {
 			enqueue ((struct in6_addr *) v6ndtarget, (struct in6_addr *) v6src6, v6ether.h_source);
 		}
@@ -1241,7 +1261,7 @@ void handle_6to4 (void) {
 	if (v6ether.h_proto != htons (ETH_P_IPV6)) {
 		return;		/* not IPv6, drop */
 	}
-//TODO// syslog (LOG_DEBUG, "TODO: Packet from IPv6 stack, target %02x:%02x:%02x:%02x:%02x:%02x\n", v6ether.h_dest [0], v6ether.h_dest [1], v6ether.h_dest [2], v6ether.h_dest [3], v6ether.h_dest [4], v6ether.h_dest [5]);
+//TODO// syslog (LOG_DEBUG, "Packet from IPv6 stack, target %02x:%02x:%02x:%02x:%02x:%02x\n", v6ether.h_dest [0], v6ether.h_dest [1], v6ether.h_dest [2], v6ether.h_dest [3], v6ether.h_dest [4], v6ether.h_dest [5]);
 	//
 	// Ignore messages from the IPv6 stack to itself
 	if (memcmp (v6ether.h_dest, v6ether.h_source, 6) == 0) {
@@ -1263,7 +1283,7 @@ void handle_6to4 (void) {
 		if (v6hops-- <= 1) {
 			return;
 		}
-syslog (LOG_DEBUG, "TODO: Forwarding plain unicast from IPv6 to 6bed4\n");
+syslog (LOG_DEBUG, "Forwarding plain unicast from IPv6 to 6bed4\n");
 		handle_6to4_plain_unicast (rawlen, v6ether.h_dest);
 	} else {
 		//
