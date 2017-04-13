@@ -1,8 +1,16 @@
-all: 6bed4_plus_pubtsp strictlydemoclient
+all: 6bed4router 6bed4peer
 
-6bed4_plus_pubtsp: router.c
+6bed4router: router.c nonstd.h
 	gcc -DLINUX -ggdb3 -o $@ $<
 
-strictlydemoclient: democlient.c
+6bed4peer: peer.c nonstd.h
 	gcc -DLINUX -ggdb3 -o $@ $<
 
+tags: router.c peer.c
+	ctags router.c peer.c nonstd.h
+
+clean:
+	rm -f 6bed4router 6bed4peer tags
+
+distclean: clean
+	rm -f Makefile
