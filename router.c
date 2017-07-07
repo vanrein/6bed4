@@ -590,39 +590,38 @@ void handle_4to6 (void) {
 void handle_6to4 (void) {
 	//
 	// Receive the IPv6 package and ensure a consistent size
-	size_t rawlen = read (v6sox, &v6data6, sizeof (v6data6));
+	size_t rawlen = read (v6sox, &v4data6, sizeof (v6data6));
 	if (rawlen == -1) {
 		return;		/* error reading, drop */
 	}
 	if (rawlen < sizeof (struct tun_pi) + sizeof (struct ip6_hdr) + 1) {
 		return;		/* too small, drop */
 	}
-	if (v6tuncmd.proto != htons (ETH_P_IPV6)) {
+	if (v4tunpi6.proto != htons (ETH_P_IPV6)) {
 		return;		/* no IPv6, drop */
 	}
-	if ((v6nexthdr == IPPROTO_ICMPV6) &&
-			(v6icmptype >= 133) && (v6icmptype <= 137)) {
+	if ((v4v6nexthdr == IPPROTO_ICMPV6) &&
+			(v4v6icmptype >= 133) && (v4v6icmptype <= 137)) {
 		return;		/* not plain IPv6, drop */
 	}
-	if (v6hoplimit-- <= 1) {
+	if (v4v6hoplimit-- <= 1) {
 		// TODO: Send back an ICMPv6 error message
 		return;		/* hop limit exceeded, drop */
 	}
-	if ((v6dst6->s6_addr [0] == 0xff) /* TODO:UDP_PORT_NOT_YET_FORCED_TO_EVEN || (v6dst6->s6_addr [8] & 0x01) */ ) {
+	if ((v4dst6->s6_addr [0] == 0xff) /* TODO:UDP_PORT_NOT_YET_FORCED_TO_EVEN || (v4dst6->s6_addr [8] & 0x01) */ ) {
 		//OPTIONAL// handle_6to4_plain_multicast ()
 		return;		/* multicast, drop */
 	}
-printf ("Received plain unicast IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.flags, v6tuncmd.proto);
+printf ("Received plain unicast IPv6 data, flags=0x%04x, proto=0x%04x\n", v4tunpi6.flags, v4tunpi6.proto);
 	//
 	// Ensure that the incoming IPv6 address is properly formatted
 	// Note that this avoids access to ::1/128, fe80::/10, fec0::/10
-	if (memcmp (v6dst6, &v6listen, 8) != 0) {
+	if (memcmp (v4dst6, &v6listen, 8) != 0) {
 		return;
 	}
-	memcpy(v4data, v6data, MTU);
 	//
 	// Harvest socket address data from destination IPv6, then send
-	relay_6bed4_plain_unicast (rawlen - sizeof (struct tun_pi), v6dst6);
+	relay_6bed4_plain_unicast (rawlen - sizeof (struct tun_pi), v4dst6);
 }
 
 
