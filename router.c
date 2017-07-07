@@ -186,7 +186,7 @@ int setup_tunnel (void) {
 	int ok = 1;
 	struct ifreq ifreq;
 	memset (&ifreq, 0, sizeof (ifreq));
-	strncpy (ifreq.ifr_name, "6bed4_rfc", IFNAMSIZ);
+	strncpy (ifreq.ifr_name, "6bed4", IFNAMSIZ);
 	ifreq.ifr_flags = IFF_TUN;
 	if (ok && (ioctl (v6sox, TUNSETIFF, (void *) &ifreq) == -1)) {
 		ok = 0;
@@ -496,7 +496,6 @@ printf ("Writing IPv6, result = %d\n",
 	write (v6sox, &v4data6, sizeof (struct tun_pi) + v4datalen));
 }
 
-
 /*
  * Forward a 6bed4 message to another 6bed4 destination address.
  * Note that existing checksums will work well, as only the
@@ -620,6 +619,7 @@ printf ("Received plain unicast IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tunc
 	if (memcmp (v6dst6, &v6listen, 8) != 0) {
 		return;
 	}
+	memcpy(v4data, v6data, MTU);
 	//
 	// Harvest socket address data from destination IPv6, then send
 	relay_6bed4_plain_unicast (rawlen - sizeof (struct tun_pi), v6dst6);
