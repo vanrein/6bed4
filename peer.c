@@ -328,6 +328,10 @@ bool setup_tunnel_address (void) {
 syslog (LOG_CRIT, "Bad news!\n");
 		ok = false;
 	}
+	snprintf (cmd, 512, "/sbin/sysctl -w net.ipv6.conf.%s.use_tempaddr=-1", ifreq.ifr_name);
+	if (ok && system (cmd) != 0) {
+		ok = 0;
+	}
 	snprintf (cmd, 512, "/sbin/ip link set %s up mtu %d", ifreq.ifr_name, MTU);
 	if (ok && system (cmd) != 0) {
 		ok = false;
@@ -344,7 +348,7 @@ syslog (LOG_CRIT, "Bad news!\n");
 		ok = false;
 	}
 #endif
-#if 0
+#if 1
 	if (default_route) {
 		snprintf (cmd, 512, "/sbin/ip -6 route add default via fe80:: dev %s", ifreq.ifr_name);
 		if (ok && system (cmd) != 0) {
