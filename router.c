@@ -496,13 +496,14 @@ printf ("Writing IPv6, result = %d\n",
 	write (v6sox, &v4data6, sizeof (struct tun_pi) + v4datalen));
 }
 
+
 /*
  * Forward a 6bed4 message to another 6bed4 destination address.
  * Note that existing checksums will work well, as only the
  * Hop Limit has been altered, and this is not part of the
  * checksum calculations.
  */
-void relay_6bed4_plain_unicast (ssize_t v4datalen, struct in6_addr *ip6) {
+void relay_6bed4_plain_unicast (uint8_t* data, ssize_t v4datalen, struct in6_addr *ip6) {
 	v4name.sin_port = htons (ip6->s6_addr [9] << 8 | ip6->s6_addr [8] ^ 0x02);
 	uint8_t *addr = (uint8_t *) &v4name.sin_addr.s_addr;
 	addr [0] = ip6->s6_addr [10];
@@ -514,7 +515,7 @@ printf ("Relaying over 6bed4 Network to %d.%d.%d.%d:%d, result = %d\n",
 ((uint8_t *) &v4name.sin_addr.s_addr) [3],
 ntohs (v4name.sin_port),
 	sendto (v4sox,
-			v4data, v4datalen,
+			data, v4datalen,
 			MSG_DONTWAIT,
 			(struct sockaddr *) &v4name, sizeof (v4name)));
 }
@@ -565,7 +566,7 @@ void handle_4to6 (void) {
 				return;
 			}
 			if (prefix_6bed4 (v4dst6)) {
-				relay_6bed4_plain_unicast (buflen, v4dst6);
+				relay_6bed4_plain_unicast (v4data, buflen, v4dst6);
 			} else {
 				handle_4to6_plain_unicast (buflen);
 			}
@@ -590,38 +591,39 @@ void handle_4to6 (void) {
 void handle_6to4 (void) {
 	//
 	// Receive the IPv6 package and ensure a consistent size
-	size_t rawlen = read (v6sox, &v4data6, sizeof (v6data6));
+	size_t rawlen = read (v6sox, &v6data6, sizeof (v6data6));
 	if (rawlen == -1) {
 		return;		/* error reading, drop */
 	}
 	if (rawlen < sizeof (struct tun_pi) + sizeof (struct ip6_hdr) + 1) {
 		return;		/* too small, drop */
 	}
-	if (v4tunpi6.proto != htons (ETH_P_IPV6)) {
+	if (v6tuncmd.proto != htons (ETH_P_IPV6)) {
 		return;		/* no IPv6, drop */
 	}
-	if ((v4v6nexthdr == IPPROTO_ICMPV6) &&
-			(v4v6icmptype >= 133) && (v4v6icmptype <= 137)) {
+	if ((v6nexthdr == IPPROTO_ICMPV6) &&
+			(v6icmptype >= 133) && (v6icmptype <= 137)) {
 		return;		/* not plain IPv6, drop */
 	}
-	if (v4v6hoplimit-- <= 1) {
+	if (v6hoplimit-- <= 1) {
 		// TODO: Send back an ICMPv6 error message
 		return;		/* hop limit exceeded, drop */
 	}
-	if ((v4dst6->s6_addr [0] == 0xff) /* TODO:UDP_PORT_NOT_YET_FORCED_TO_EVEN || (v4dst6->s6_addr [8] & 0x01) */ ) {
+	if ((v6dst6->s6_addr [0] == 0xff) /* TODO:UDP_PORT_NOT_YET_FORCED_TO_EVEN || (v6dst6->s6_addr [8] & 0x01) */ ) {
+printf ("Received multicast IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.flags, v6tuncmd.proto);
 		//OPTIONAL// handle_6to4_plain_multicast ()
 		return;		/* multicast, drop */
 	}
-printf ("Received plain unicast IPv6 data, flags=0x%04x, proto=0x%04x\n", v4tunpi6.flags, v4tunpi6.proto);
+printf ("Received plain unicast IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.flags, v6tuncmd.proto);
 	//
 	// Ensure that the incoming IPv6 address is properly formatted
 	// Note that this avoids access to ::1/128, fe80::/10, fec0::/10
-	if (memcmp (v4dst6, &v6listen, 8) != 0) {
+	if (memcmp (v6dst6, &v6listen, 8) != 0) {
 		return;
 	}
 	//
 	// Harvest socket address data from destination IPv6, then send
-	relay_6bed4_plain_unicast (rawlen - sizeof (struct tun_pi), v4dst6);
+	relay_6bed4_plain_unicast (v6data, rawlen - sizeof (struct tun_pi), v6dst6);
 }
 
 
