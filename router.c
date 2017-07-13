@@ -165,6 +165,15 @@ uint8_t allrouters_linklocal_address [] = {
 	0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x02,
 };
 
+void addr_6bed4(struct in6_addr *dst_ip6, uint8_t *s_addr, int sin_port, int lanip) {
+
+	dst_ip6->s6_addr [8] = s_addr [0] & 0xfc;
+	memcpy (&dst_ip6->s6_addr [9], s_addr + 1, 3);
+	dst_ip6->s6_addr [12] = sin_port / 256;
+	dst_ip6->s6_addr [13] = sin_port % 256;
+	dst_ip6->s6_addr [14] = (s_addr [0] & 0x03) << 6 | lanip >> 8;
+	dst_ip6->s6_addr [15] = lanip & 0xff;
+}
 
 /*
  *
@@ -334,7 +343,7 @@ size_t icmp6_dest_linkaddr (size_t optidx) {
  * Test if the provided IPv6 address matches the prefix used for 6bed4.
  */
 static inline bool prefix_6bed4 (struct in6_addr *ip6) {
-	return memcmp (&v6listen, ip6->s6_addr, 8) == 0;
+	return memcmp (&v6listen, ip6->s6_addr, 8) == 0 && ip6->s6_addr[12] != 0 && ip6->s6_addr[13] != 0;
 }
 
 
@@ -346,19 +355,17 @@ static inline bool prefix_6bed4 (struct in6_addr *ip6) {
 bool validate_originator (struct sockaddr_in *sin, struct in6_addr *ip6) {
 	uint16_t port = ntohs (sin->sin_port);
 	uint32_t addr = ntohl (sin->sin_addr.s_addr);
+
 	if (!prefix_6bed4 (ip6)) {
 		return false;
 	}
-	if ((port % 256) != (ip6->s6_addr [8] ^ 0x02)) {
+	if (port % 256 != ip6->s6_addr [13]) {
 		return false;
 	}
-	if ((port / 256) != ip6->s6_addr [9]) {
+	if (port / 256 != ip6->s6_addr [12]) {
 		return false;
 	}
-	if ((addr >> 24) != ip6->s6_addr [10]) {
-		return false;
-	}
-	if ((addr & 0x00ffffff) != (htonl (ip6->s6_addr32 [3]) & 0x00ffffff)) {
+	if (addr != htonl ((ip6->s6_addr32 [2] & 0xfffffffc) | (ip6->s6_addr [14] >> 6))) {
 		return false;
 	}
 	return true;
@@ -390,12 +397,7 @@ void handle_6bed4_router_solicit (void) {
 	writepos = icmp6_prefix (writepos, 0);
 	//TODO:DEPRECATED// writepos = icmp6_dest_linkaddr (writepos);
 	memcpy (&observed, v6listen_linklocal, 8);
-	observed.s6_addr [8] = htons (v4name.sin_port) % 256 ^ 0x02;
-	observed.s6_addr [9] = htons (v4name.sin_port) / 256;
-	memcpy (&observed.s6_addr32 [3], &v4name.sin_addr, 4);
-	observed.s6_addr [10] = observed.s6_addr [12];
-	observed.s6_addr [11] = 0xff;
-	observed.s6_addr [12] = 0xfe;
+	addr_6bed4(&observed, (uint8_t *) &v4name.sin_addr.s_addr, ntohs(v4name.sin_port), 1);
 	icmp6_reply (writepos, &observed);
 }
 
@@ -504,10 +506,10 @@ printf ("Writing IPv6, result = %d\n",
  * checksum calculations.
  */
 void relay_6bed4_plain_unicast (uint8_t* data, ssize_t v4datalen, struct in6_addr *ip6) {
-	v4name.sin_port = htons (ip6->s6_addr [9] << 8 | ip6->s6_addr [8] ^ 0x02);
+	v4name.sin_port = htons (ip6->s6_addr [12] << 8 | ip6->s6_addr [13]);
 	uint8_t *addr = (uint8_t *) &v4name.sin_addr.s_addr;
-	addr [0] = ip6->s6_addr [10];
-	memcpy (addr + 1, ip6->s6_addr + 13, 3);
+	addr [0] = (ip6->s6_addr [8] & 0xfc) | ip6->s6_addr [14] >> 6;
+	memcpy (addr + 1, ip6->s6_addr + 9, 3);
 printf ("Relaying over 6bed4 Network to %d.%d.%d.%d:%d, result = %d\n",
 ((uint8_t *) &v4name.sin_addr.s_addr) [0],
 ((uint8_t *) &v4name.sin_addr.s_addr) [1],
@@ -826,12 +828,8 @@ int main (int argc, char *argv []) {
 	lladdr_6bed4 [1] = UDP_PORT_6BED4 / 256;
 	memcpy (lladdr_6bed4 + 2, (uint8_t *) &v4name.sin_addr, 4);
 	memcpy (&v6listen_complete, &v6listen, 8);
-	v6listen_complete.s6_addr [8] = lladdr_6bed4 [0] ^ 0x02;
-	v6listen_complete.s6_addr [9] =  lladdr_6bed4 [1];
-	v6listen_complete.s6_addr [10] =  lladdr_6bed4 [2];
-	v6listen_complete.s6_addr [11] = 0xff;
-	v6listen_complete.s6_addr [12] = 0xfe;
-	memcpy (&v6listen_complete.s6_addr [13], lladdr_6bed4 + 3, 3);
+	addr_6bed4(&v6listen_complete, lladdr_6bed4 + 2, ntohs(v4name.sin_port), 0);
+
 	memcpy (v6listen_linklocal_complete, v6listen_linklocal, 8);
 	memcpy (v6listen_linklocal_complete + 8, &v6listen_complete.s6_addr [8], 8);
 printf ("LISTEN lladdr_6bed4 = %02x:%02x:%02x:%02x:%02x:%02x\n", lladdr_6bed4 [0], lladdr_6bed4 [1], lladdr_6bed4 [2], lladdr_6bed4 [3], lladdr_6bed4 [4], lladdr_6bed4 [5]);

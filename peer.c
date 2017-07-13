@@ -322,15 +322,15 @@ syslog (LOG_DEBUG, "Found Interface Index %d for name %s\n", ifreq.ifr_ifindex, 
 bool setup_tunnel_address (void) {
 	bool ok = have_tunnel;
 	char cmd [512+1];
-	// snprintf (cmd, 512, "/sbin/ifconfig %s hw ether 98:1e:53:a4:cf:6e", ifreq.ifr_name, MTU);
+
+	snprintf (cmd, 512, "/sbin/sysctl -w net.ipv6.conf.%s.autoconf=0", ifreq.ifr_name);
+	if (ok && system (cmd) != 0) {
+		ok = 0;
+	}
 	snprintf (cmd, 512, "/sbin/ip link set %s address %02x:%02x:%02x:%02x:%02x:%02x", ifreq.ifr_name, v6lladdr [0], v6lladdr [1], v6lladdr [2], v6lladdr [3], v6lladdr [4], v6lladdr [5]);
 	if (ok && system (cmd) != 0) {
 syslog (LOG_CRIT, "Bad news!\n");
 		ok = false;
-	}
-	snprintf (cmd, 512, "/sbin/sysctl -w net.ipv6.conf.%s.use_tempaddr=-1", ifreq.ifr_name);
-	if (ok && system (cmd) != 0) {
-		ok = 0;
 	}
 	snprintf (cmd, 512, "/sbin/ip link set %s up mtu %d", ifreq.ifr_name, MTU);
 	if (ok && system (cmd) != 0) {
@@ -342,6 +342,7 @@ syslog (LOG_CRIT, "Bad news!\n");
 		ok = false;
 	}
 #endif
+#define TODO_COMPENSATE_FOR_AUTOCONFIG
 #ifdef TODO_COMPENSATE_FOR_AUTOCONFIG
 	snprintf (cmd, 512, "/sbin/ip -6 addr add %s/64 dev %s", v6prefix, ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
@@ -850,9 +851,6 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 		if (memcmp (v4dst6, democlient_linklocal_address, 8) != 0) {
 			return;   /* no address setup for me, drop */
 		}
-		if ((v4dst6->s6_addr [11] != 0xff) || (v4dst6->s6_addr [12] != 0xfe)) {
-			return;   /* funny interface identifier, drop */
-		}
 		if (v4dst6->s6_addr [8] & 0x01) {
 			syslog (LOG_WARNING, "TODO: Ignoring (by accepting) an odd public UDP port revealed in a Router Advertisement -- this could cause confusion with multicast traffic\n");
 		}
@@ -1280,6 +1278,7 @@ void handle_6to4 (void) {
 			(v6icmp6type >= 133) && (v6icmp6type <= 137)) {
 		//
 		// Not Plain: Router Adv/Sol, Neighbor Adv/Sol, Redirect
+syslog (LOG_DEBUG, "Forwarding non-plain unicast from IPv6 to 6bed4\n");
 		handle_6to4_nd (rawlen);
 	} else if ((v6dst6->s6_addr [0] != 0xff) && !(v6dst6->s6_addr [8] & 0x01)) {
 		//
