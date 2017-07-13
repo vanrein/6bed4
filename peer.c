@@ -18,6 +18,7 @@
 #include <string.h>
 #include <getopt.h>
 #include <fcntl.h>
+#include <time.h>
 
 #include <syslog.h>
 #ifndef LOG_PERROR
@@ -29,6 +30,8 @@
 #include <sys/time.h>
 #include <sys/select.h>
 #include <sys/ioctl.h>
+
+#include <net/if.h>
 
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -193,7 +196,7 @@ time_t keepalive_ttl = -1;
 uint8_t ipv6_router_solicitation [] = {
 	// IPv6 header
 	0x60, 0x00, 0x00, 0x00,
-	16 / 256, 16 % 256, IPPROTO_ICMPV6, 255,
+	16 >> 8, 16 & 0xff, IPPROTO_ICMPV6, 255,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,		 // unspecd src
 	0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02, // all-rtr tgt
 	// ICMPv6 header: router solicitation
@@ -207,7 +210,7 @@ uint8_t ipv6_router_solicitation [] = {
 uint8_t ipv6_defaultrouter_neighbor_advertisement [] = {
 	// IPv6 header
 	0x60, 0x00, 0x00, 0x00,
-	32 / 256, 32 % 256, IPPROTO_ICMPV6, 255,
+	32 >> 8, 32 & 0xff, IPPROTO_ICMPV6, 255,
 	0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	// src is default router
 	0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,// dst is all-nodes multicast, portable?
 	// ICMPv6 header: neighbor solicitation
@@ -218,7 +221,7 @@ uint8_t ipv6_defaultrouter_neighbor_advertisement [] = {
 	0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,	// the targeted neighbor
 	// ICMPv6 option: target link layer address
 	2, 1,
-	UDP_PORT_6BED4 % 256, UDP_PORT_6BED4 / 256,
+	UDP_PORT_6BED4 & 0xff, UDP_PORT_6BED4 >> 8,
 	SERVER_6BED4_IPV4_INT0, SERVER_6BED4_IPV4_INT1, SERVER_6BED4_IPV4_INT2, SERVER_6BED4_IPV4_INT3
 };
 
@@ -299,12 +302,6 @@ syslog (LOG_DEBUG, "Found Interface Index %d for name %s\n", ifreq.ifr_ifindex, 
 		ok = ok & (ifreq.ifr_ifindex != 0);
 	}
 	char cmd [512+1];
-#if 0
-	snprintf (cmd, 512, "/sbin/ip addr add fe80::1 dev %s scope link", ifreq.ifr_name);
-	if (ok && system (cmd) != 0) {
-		ok = false;
-	}
-#endif 
 	snprintf (cmd, 512, "/sbin/sysctl -q -w net.ipv6.conf.%s.forwarding=0", ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
 		ok = false;
@@ -323,7 +320,7 @@ bool setup_tunnel_address (void) {
 	bool ok = have_tunnel;
 	char cmd [512+1];
 
-	snprintf (cmd, 512, "/sbin/sysctl -w net.ipv6.conf.%s.autoconf=0", ifreq.ifr_name);
+	snprintf (cmd, 512, "/sbin/sysctl -q -w net.ipv6.conf.%s.autoconf=0", ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
 		ok = 0;
 	}
@@ -336,27 +333,16 @@ syslog (LOG_CRIT, "Bad news!\n");
 	if (ok && system (cmd) != 0) {
 		ok = false;
 	}
-#ifdef TODO_BELIEVE_THAT_ROUTES_SHOULD_BE_ADDED_STATICALLY
-	snprintf (cmd, 512, "/sbin/ip -6 route add 2001:610:188:2001::/64 mtu 1280 dev %s", ifreq.ifr_name);
-	if (ok && system (cmd) != 0) {
-		ok = false;
-	}
-#endif
-#define TODO_COMPENSATE_FOR_AUTOCONFIG
-#ifdef TODO_COMPENSATE_FOR_AUTOCONFIG
 	snprintf (cmd, 512, "/sbin/ip -6 addr add %s/64 dev %s", v6prefix, ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
 		ok = false;
 	}
-#endif
-#if 1
 	if (default_route) {
 		snprintf (cmd, 512, "/sbin/ip -6 route add default via fe80:: dev %s", ifreq.ifr_name);
 		if (ok && system (cmd) != 0) {
 			ok = false;
 		}
 	}
-#endif
 	return ok;
 }
 #endif /* LINUX */
@@ -624,10 +610,10 @@ if (memcmp (ip6, v6listen_linklocal, 8) != 0)
 	if (!prefix_6bed4 (ip6)) {
 		return false;
 	}
-	if ((port % 256) != (ip6->s6_addr [8] ^ 0x02)) {
+	if ((port & 0xff) != (ip6->s6_addr [8] ^ 0x02)) {
 		return false;
 	}
-	if ((port / 256) != ip6->s6_addr [9]) {
+	if ((port >> 8) != ip6->s6_addr [9]) {
 		return false;
 	}
 	if ((addr >> 24) != ip6->s6_addr [10]) {
@@ -722,7 +708,7 @@ bool lookup_neighbor (uint8_t *ipv6, uint8_t *lladdr) {
 	uint16_t pos = 0;
 { char buf [INET6_ADDRSTRLEN]; inet_ntop (AF_INET6, ipv6, buf, sizeof (buf)); syslog (LOG_DEBUG, "Looking up v6addr %s\n", buf); }
 	while (recvlen = recv (rtsox, ((char *) &msg) + pos, sizeof (msg) - pos, MSG_DONTWAIT), recvlen > 0) {
-syslog (LOG_DEBUG, "Message of %d bytes from neighbor cache, total is now %d\n", recvlen, pos + recvlen);
+syslog (LOG_DEBUG, "Message of %zd bytes from neighbor cache, total is now %zd\n", recvlen, pos + recvlen);
 		recvlen += pos;
 		pos = 0;
 		struct mymsg *resp;
@@ -794,10 +780,10 @@ void handle_4to6_plain (ssize_t v4datalen, struct sockaddr_in *sin) {
 	// Send the unwrapped IPv6 message out over v6sox
 	v4ether.h_proto = htons (ETH_P_IPV6);
 	memcpy (v4ether.h_dest,   v6lladdr, 6);
-	v4ether.h_source [0] = ntohs (sin->sin_port) % 256;
-	v4ether.h_source [1] = ntohs (sin->sin_port) / 256;
+	v4ether.h_source [0] = ntohs (sin->sin_port) & 0xff;
+	v4ether.h_source [1] = ntohs (sin->sin_port) >> 8;
 	memcpy (v4ether.h_source + 2, &sin->sin_addr, 4);
-syslog (LOG_INFO, "Writing IPv6, result = %d\n",
+syslog (LOG_INFO, "Writing IPv6, result = %zd\n",
 	write (v6sox, &v4data6, sizeof (struct ethhdr) + v4datalen)
 )
 	;
@@ -885,32 +871,6 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 			}
 			rdofs += (v4v6icmpdata [rdofs + 1] << 3);
 		}
-#ifdef TODO_DEPRECATED
-		if (destprefix && destlladdr) {
-			memcpy (v6lladdr, destlladdr, 6);
-			memcpy (&v6listen.s6_addr [0], destprefix, 8);
-			v6listen.s6_addr [8] = destlladdr [0] ^ 0x02;
-			v6listen.s6_addr [9] = destlladdr [1];
-			v6listen.s6_addr [10] = destlladdr [2];
-			v6listen.s6_addr [11] = 0xff;
-			v6listen.s6_addr [12] = 0xfe;
-			v6listen.s6_addr [13] = destlladdr [3];
-			v6listen.s6_addr [14] = destlladdr [4];
-			v6listen.s6_addr [15] = destlladdr [5];
-			inet_ntop (AF_INET6,
-				&v6listen,
-				v6prefix,
-				sizeof (v6prefix));
-			syslog (LOG_INFO, "%s: Assigning address %s to tunnel\n", program, v6prefix);
-			if (!setup_tunnel_address ()) {
-				syslog (LOG_CRIT, "Failed to setup tunnel address\n");
-				exit (1);
-			}
-			got_lladdr = true;
-			maintenance_time_cycle = maintenance_time_cycle_max;
-			maintenance_time_sec = time (NULL) + maintenance_time_cycle;
-		}
-#else
 		if (destprefix) {
 			memcpy (v6listen.s6_addr + 0, destprefix, 8);
 			memcpy (v6listen.s6_addr + 8, v4dst6->s6_addr + 8, 8);
@@ -931,7 +891,6 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 			maintenance_time_cycle = maintenance_time_cycle_max;
 			maintenance_time_sec = time (NULL) + maintenance_time_cycle;
 		}
-#endif
 		return;
 	case ND_NEIGHBOR_SOLICIT:
 		//
@@ -942,7 +901,7 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 			return;		/* too short, drop */
 		}
 		syslog (LOG_DEBUG, "%s: Replicating Neighbor Solicatation from 6bed4 to the IPv6 Link\n", program);
-char buf [INET6_ADDRSTRLEN]; uint8_t ll [6]; if ((memcmp (v4src6, v6listen_linklocal, 8) != 0) && (memcmp (v4src6, &v6listen, 8) != 0)) { inet_ntop (AF_INET6, v4src6, buf, sizeof (buf)); syslog (LOG_DEBUG, "Source IPv6 address %s from wrong origin\n"); } else { uint8_t pfaddr [16]; memcpy (pfaddr, v6listen.s6_addr, 8); memcpy (pfaddr + 8, v4src6->s6_addr + 8, 8); inet_ntop (AF_INET6, pfaddr, buf, sizeof (buf)); if (lookup_neighbor (pfaddr, ll)) { syslog (LOG_DEBUG, "Source IPv6 %s has Link-Local Address %02x:%02x:%02x:%02x:%02x:%02x with metric %d\n", buf, ll [0], ll [1], ll [2], ll [3], ll [4], ll [5], lladdr_metric (ll)); } else { syslog (LOG_DEBUG, "Source IPv6 %s is unknown to me\n", buf); } }
+char buf [INET6_ADDRSTRLEN]; uint8_t ll [6]; if ((memcmp (v4src6, v6listen_linklocal, 8) != 0) && (memcmp (v4src6, &v6listen, 8) != 0)) { inet_ntop (AF_INET6, v4src6, buf, sizeof (buf)); syslog (LOG_DEBUG, "Source IPv6 address %s from wrong origin\n", buf); } else { uint8_t pfaddr [16]; memcpy (pfaddr, v6listen.s6_addr, 8); memcpy (pfaddr + 8, v4src6->s6_addr + 8, 8); inet_ntop (AF_INET6, pfaddr, buf, sizeof (buf)); if (lookup_neighbor (pfaddr, ll)) { syslog (LOG_DEBUG, "Source IPv6 %s has Link-Local Address %02x:%02x:%02x:%02x:%02x:%02x with metric %d\n", buf, ll [0], ll [1], ll [2], ll [3], ll [4], ll [5], lladdr_metric (ll)); } else { syslog (LOG_DEBUG, "Source IPv6 %s is unknown to me\n", buf); } }
 uint8_t optofs = 4 + 16;
 #if 0
 uint8_t *srcll = NULL;	/* TODO -- use 6bed4 Network sender instead! */
@@ -1027,8 +986,8 @@ syslog (LOG_DEBUG, "Redirecting the remote peer to the more efficient route that
 		v4v6icmpdata [0] |= 0xe0;	/* Router, Solicited, Override */
 		v4v6icmpdata [20] = 2;		/* Target Link-Layer Address */
 		v4v6icmpdata [21] = 1;		/* Length: 1x 8 bytes */
-		v4v6icmpdata [22] = ntohs (v4name.sin_port) % 256;
-		v4v6icmpdata [23] = ntohs (v4name.sin_port) / 256;
+		v4v6icmpdata [22] = ntohs (v4name.sin_port) & 0xff;
+		v4v6icmpdata [23] = ntohs (v4name.sin_port) >> 8;
 		memcpy (v4v6icmpdata + 24, &v4name.sin_addr, 4);
 		v4v6plen = htons (24 + 8);
 		v4v6icmpcksum = icmp6_checksum ((uint8_t *) v4hdr6, 24 + 8);
@@ -1120,7 +1079,7 @@ void handle_6to4_plain_unicast (const ssize_t pktlen, const uint8_t *lladdr) {
 			syslog (LOG_ERR, "Failed to switch IPv4 socket to QoS setting 0x%02x\n", v4qos);
 		}
 	}
-	syslog (LOG_DEBUG, "%s: Sending IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n", program,
+	syslog (LOG_DEBUG, "%s: Sending IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %zd\n", program,
 	((uint8_t *) &v4dest.sin_addr.s_addr) [0],
 	((uint8_t *) &v4dest.sin_addr.s_addr) [1],
 	((uint8_t *) &v4dest.sin_addr.s_addr) [2],
@@ -1176,7 +1135,7 @@ void handle_6to4_nd (ssize_t pktlen) {
 		v6ether.h_proto = htons (ETH_P_IPV6);
 		memcpy (v6ether.h_dest, v6ether.h_source, 6);
 		memcpy (v6ether.h_source, v6lladdr, 6);
-		syslog (LOG_INFO, "Replying Router Advertisement to the IPv6 Link, result = %d\n",
+		syslog (LOG_INFO, "Replying Router Advertisement to the IPv6 Link, result = %zd\n",
 			write (v6sox, &v6data6, sizeof (struct ethhdr) + sizeof (struct ip6_hdr) + 4 + writepos)
 		)
 			;
@@ -1345,7 +1304,7 @@ void solicit_6bed4_neighbor (const struct ndqueue *info, const uint8_t *addr6bed
 bool chase_neighbor_6bed4_address (struct ndqueue *info) {
 	uint8_t addr6bed4 [6];
 	static const uint8_t addr6bed4_lancast [8] = {
-		UDP_PORT_6BED4 % 256, UDP_PORT_6BED4 / 256,
+		UDP_PORT_6BED4 & 0xff, UDP_PORT_6BED4 >> 8,
 		224, 0, 0, 1
 	};
 	if (info->todo_lancast > 0) {
@@ -1436,7 +1395,7 @@ void regular_maintenance (void) {
 		if (maintenance_time_cycle > maintenance_time_cycle_max) {
 			maintenance_time_cycle = maintenance_time_cycle_max;
 		}
-		syslog (LOG_INFO, "Sent Router Advertisement to Public 6bed4 Service, next attempt in %d seconds\n", maintenance_time_cycle);
+		syslog (LOG_INFO, "Sent Router Advertisement to Public 6bed4 Service, next attempt in %ld seconds\n", maintenance_time_cycle);
 	} else {
 		syslog (LOG_INFO, "Sending a KeepAlive message (empty UDP) to the 6bed4 Router\n");
 		keepalive ();
@@ -1478,7 +1437,7 @@ void run_daemon (void) {
 				|| (ndqueue->next->tv.tv_sec < now.tv_sec))) {
 			//
 			// Run the entry's handler code
-			syslog (LOG_DEBUG, "Queue at %d.%03d: Timed for %d.%03d", now.tv_sec, now.tv_usec / 1000, ndqueue->next->tv.tv_sec, ndqueue->next->tv.tv_usec / 1000);
+			syslog (LOG_DEBUG, "Queue at %ld.%03ld: Timed for %ld.%03ld", now.tv_sec, now.tv_usec / 1000, ndqueue->next->tv.tv_sec, ndqueue->next->tv.tv_usec / 1000);
 			keep = chase_neighbor_6bed4_address (ndqueue->next);
 			if (!keep) {
 				dequeue (ndqueue->next);
@@ -1575,7 +1534,7 @@ int process_args (int argc, char *argv []) {
 		case 's':
 			if (v4sox != -1) {
 				ok = 0;
-				fprintf (stderr, "%s: You can only specify a single server address\n");
+				fprintf (stderr, "%s: You can only specify a single server address\n", program);
 				continue;
 			}
 			v4server = optarg;
@@ -1595,7 +1554,7 @@ int process_args (int argc, char *argv []) {
 		case 't':
 			if (v6sox != -1) {
 				ok = 0;
-				fprintf (stderr, "%s: Multiple -t arguments are not permitted\n");
+				fprintf (stderr, "%s: Multiple -t arguments are not permitted\n", program);
 				break;
 			}
 			v6sox = open (optarg, O_RDWR);
@@ -1625,7 +1584,7 @@ int process_args (int argc, char *argv []) {
 				exit (1);
 			}
 			if (tmpport & 0x0001) {
-				fprintf (stderr, "%s: UDP port number %d is odd, which is not permitted\n", program, tmpport);
+				fprintf (stderr, "%s: UDP port number %ld is odd, which is not permitted\n", program, tmpport);
 				exit (1);
 			}
 			v4bind.sin_port = htons (tmpport);
@@ -1758,8 +1717,8 @@ int main (int argc, char *argv []) {
 	}
 	//
 	// Construct the 6bed4 Router's complete link-layer address
-	router_linklocal_address_complete [8] = (ntohs (v4peer.sin_port) % 256) ^ 0x02;
-	router_linklocal_address_complete [9] = ntohs (v4peer.sin_port) / 256;
+	router_linklocal_address_complete [8] = (ntohs (v4peer.sin_port) & 0xff) ^ 0x02;
+	router_linklocal_address_complete [9] = ntohs (v4peer.sin_port) >> 8;
 	router_linklocal_address_complete [10] = ntohl (v4peer.sin_addr.s_addr) >> 24;
 	router_linklocal_address_complete [11] = 0xff;
 	router_linklocal_address_complete [12] = 0xfe;
@@ -1771,7 +1730,7 @@ int main (int argc, char *argv []) {
 	// Create memory for the freequeue buffer
 	freequeue = calloc (freequeue_items, sizeof (struct ndqueue));
 	if (!freequeue) {
-		syslog (LOG_CRIT, "%d: Failed to allocate %d queue items\n", program, freequeue_items);
+		syslog (LOG_CRIT, "%s: Failed to allocate %d queue items\n", program, freequeue_items);
 		exit (1);
 	}
 	int i;
@@ -1849,15 +1808,15 @@ int main (int argc, char *argv []) {
 			} else if (setsockopt (v4mcast, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof (yes)) == -1) {
 				close (v4mcast);
 				v4mcast = -1;
-				sysctl (LOG_ERR, "No LAN bypass: Failed to share multicast port: %s\n", strerror (errno));
+				syslog (LOG_ERR, "No LAN bypass: Failed to share multicast port: %s\n", strerror (errno));
 			} else if (setsockopt (v4mcast, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof (mreq)) == -1) {
 				close (v4mcast);
 				v4mcast = -1;
-				sysctl (LOG_ERR, "No LAN bypass: Failed to setup multicast: %s\n", strerror (errno));
+				syslog (LOG_ERR, "No LAN bypass: Failed to setup multicast: %s\n", strerror (errno));
 			} else if ((v4ttl_mcast != -1) && (setsockopt (v4mcast, IPPROTO_IP, IP_MULTICAST_TTL, &v4ttl_mcast, sizeof (v4ttl_mcast)) == -1)) {
 				close (v4mcast);
 				v4mcast = -1;
-				sysctl (LOG_ERR, "No LAN bypass: Failed to configure the multicast radius: %s\n", strerror (errno));
+				syslog (LOG_ERR, "No LAN bypass: Failed to configure the multicast radius: %s\n", strerror (errno));
 			}
 #if 0
 			if (bind (v4mcast, (struct sockaddr *) &v4allnodes, sizeof (v4allnodes)) != 0) {
@@ -1872,7 +1831,7 @@ int main (int argc, char *argv []) {
 #endif
 		}
 	} else {
-		syslog (LOG_INFO, "%s: No LAN bypass: Not desired\n");
+		syslog (LOG_INFO, "%s: No LAN bypass: Not desired\n", program);
 	}
 	//
 	// Construct an rtnetlink socket for neighbor cache interaction

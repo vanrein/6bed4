@@ -169,8 +169,8 @@ void addr_6bed4(struct in6_addr *dst_ip6, uint8_t *s_addr, int sin_port, int lan
 
 	dst_ip6->s6_addr [8] = s_addr [0] & 0xfc;
 	memcpy (&dst_ip6->s6_addr [9], s_addr + 1, 3);
-	dst_ip6->s6_addr [12] = sin_port / 256;
-	dst_ip6->s6_addr [13] = sin_port % 256;
+	dst_ip6->s6_addr [12] = sin_port >> 8;
+	dst_ip6->s6_addr [13] = sin_port & 0xff;
 	dst_ip6->s6_addr [14] = (s_addr [0] & 0x03) << 6 | lanip >> 8;
 	dst_ip6->s6_addr [15] = lanip & 0xff;
 }
@@ -277,7 +277,7 @@ void icmp6_reply (size_t icmp6bodylen, struct in6_addr *dest) {
 	v4v6icmpcksum = icmp6_checksum (ntohs (v4v6plen));
 	//
 	// Send the message to the IPv4 originator port
-printf ("Sending ICMPv6-IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %d\n",
+printf ("Sending ICMPv6-IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %zd\n",
 ((uint8_t *) &v4name.sin_addr.s_addr) [0],
 ((uint8_t *) &v4name.sin_addr.s_addr) [1],
 ((uint8_t *) &v4name.sin_addr.s_addr) [2],
@@ -331,8 +331,8 @@ size_t icmp6_prefix (size_t optidx, uint8_t endlife) {
 size_t icmp6_dest_linkaddr (size_t optidx) {
 	uint8_t typelen [2] = { ND_OPT_DESTINATION_LINKADDR, 1 };
 	memcpy (v4v6icmpdata + optidx + 0, &typelen, 2);
-	v4v6icmpdata [optidx + 2] = ntohs (v4name.sin_port) % 256;
-	v4v6icmpdata [optidx + 3] = ntohs (v4name.sin_port) / 256;
+	v4v6icmpdata [optidx + 2] = ntohs (v4name.sin_port) & 0xff;
+	v4v6icmpdata [optidx + 3] = ntohs (v4name.sin_port) >> 8;
 	memcpy (v4v6icmpdata + optidx + 4, &v4name.sin_addr, 4);
 	optidx += 8;
 	return optidx;
@@ -342,8 +342,8 @@ size_t icmp6_dest_linkaddr (size_t optidx) {
 /*
  * Test if the provided IPv6 address matches the prefix used for 6bed4.
  */
-static inline bool prefix_6bed4 (struct in6_addr *ip6) {
-	return memcmp (&v6listen, ip6->s6_addr, 8) == 0 && ip6->s6_addr[12] != 0 && ip6->s6_addr[13] != 0;
+static inline bool is_6bed4 (struct in6_addr *ip6) {
+	return memcmp (&v6listen, ip6->s6_addr, 8) == 0 && (ip6->s6_addr[12] != 0 || ip6->s6_addr[13] != 0);
 }
 
 
@@ -356,16 +356,16 @@ bool validate_originator (struct sockaddr_in *sin, struct in6_addr *ip6) {
 	uint16_t port = ntohs (sin->sin_port);
 	uint32_t addr = ntohl (sin->sin_addr.s_addr);
 
-	if (!prefix_6bed4 (ip6)) {
+	if (!is_6bed4 (ip6)) {
 		return false;
 	}
-	if (port % 256 != ip6->s6_addr [13]) {
+	if ((port & 0xff) != ip6->s6_addr [13]) {
 		return false;
 	}
-	if (port / 256 != ip6->s6_addr [12]) {
+	if ((port >> 8) != ip6->s6_addr [12]) {
 		return false;
 	}
-	if (addr != htonl ((ip6->s6_addr32 [2] & 0xfffffffc) | (ip6->s6_addr [14] >> 6))) {
+	if (addr != ((ntohl(ip6->s6_addr32 [2]) & 0xfcffffff) | (((uint32_t) ip6->s6_addr [14] & 0xc0) << 18))) {
 		return false;
 	}
 	return true;
@@ -494,7 +494,7 @@ void handle_4to6_nd (ssize_t v4ngbcmdlen) {
  * checksum calculations.
  */
 void handle_4to6_plain_unicast (ssize_t v4datalen) {
-printf ("Writing IPv6, result = %d\n",
+printf ("Writing IPv6, result = %zd\n",
 	write (v6sox, &v4data6, sizeof (struct tun_pi) + v4datalen));
 }
 
@@ -510,7 +510,7 @@ void relay_6bed4_plain_unicast (uint8_t* data, ssize_t v4datalen, struct in6_add
 	uint8_t *addr = (uint8_t *) &v4name.sin_addr.s_addr;
 	addr [0] = (ip6->s6_addr [8] & 0xfc) | ip6->s6_addr [14] >> 6;
 	memcpy (addr + 1, ip6->s6_addr + 9, 3);
-printf ("Relaying over 6bed4 Network to %d.%d.%d.%d:%d, result = %d\n",
+printf ("Relaying over 6bed4 Network to %d.%d.%d.%d:%d, result = %zd\n",
 ((uint8_t *) &v4name.sin_addr.s_addr) [0],
 ((uint8_t *) &v4name.sin_addr.s_addr) [1],
 ((uint8_t *) &v4name.sin_addr.s_addr) [2],
@@ -567,12 +567,12 @@ void handle_4to6 (void) {
 			if (v4v6hoplimit-- <= 1) {
 				return;
 			}
-			if (prefix_6bed4 (v4dst6)) {
+			if (is_6bed4 (v4dst6)) {
 				relay_6bed4_plain_unicast (v4data, buflen, v4dst6);
 			} else {
 				handle_4to6_plain_unicast (buflen);
 			}
-		} else if (prefix_6bed4 (v4src6)) {
+		} else if (is_6bed4 (v4src6)) {
 			// The sender must not have kept NAT/firewall holes
 			// open and should be instructed about a change in
 			// its 6bed4 Link-Local Address.
@@ -824,8 +824,8 @@ int main (int argc, char *argv []) {
 	//  * v6listen is the router's 6bed4 prefix ending in 64 zero bits
 	//  * v6listen_linklocal is the address fe80::/128
 	//
-	lladdr_6bed4 [0] = UDP_PORT_6BED4 % 256;
-	lladdr_6bed4 [1] = UDP_PORT_6BED4 / 256;
+	lladdr_6bed4 [0] = UDP_PORT_6BED4 & 0xff;
+	lladdr_6bed4 [1] = UDP_PORT_6BED4 >> 8;
 	memcpy (lladdr_6bed4 + 2, (uint8_t *) &v4name.sin_addr, 4);
 	memcpy (&v6listen_complete, &v6listen, 8);
 	addr_6bed4(&v6listen_complete, lladdr_6bed4 + 2, ntohs(v4name.sin_port), 0);
