@@ -340,10 +340,25 @@ size_t icmp6_dest_linkaddr (size_t optidx) {
 
 
 /*
+ * Test if an address is a local override.  This function is compiled-in
+ * to support hosts with a /64 from their own ISP and nothing more; they
+ * need to access local IPv6 addresses.  We rely on the 6bed4 port being
+ * 0 to decide that an address cannot be anything but a local override.
+ * Define LOCAL_OVERRIDES_PORT0 to enable this feature.
+ */
+#ifdef LOCAL_OVERRIDES_PORT0
+static inline bool is_local_override (struct in6_addr *ip6) {
+	return ip6->s6addr [6] == 0;
+}
+#else
+#define is_local_override (ip6) false
+#endif
+
+/*
  * Test if the provided IPv6 address matches the prefix used for 6bed4.
  */
 static inline bool is_6bed4 (struct in6_addr *ip6) {
-	return memcmp (&v6listen, ip6->s6_addr, 8) == 0 && (ip6->s6_addr[12] != 0 || ip6->s6_addr[13] != 0);
+	return memcmp (&v6listen, ip6->s6_addr, 8) == 0;
 }
 
 
@@ -563,7 +578,9 @@ void handle_4to6 (void) {
 	} else if ((v4dst6->s6_addr [0] != 0xff) && !(v4dst6->s6_addr [8] & 0x01)) {
 		//
 		// Plain Unicast
-		if (validate_originator (&v4name, v4src6)) {
+		if (is_local_override (v4dst6)) {
+			handle_4to6_plain_unicast (buflen);
+		} else if (validate_originator (&v4name, v4src6)) {
 			if (v4v6hoplimit-- <= 1) {
 				return;
 			}

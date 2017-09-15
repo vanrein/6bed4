@@ -38,4 +38,4 @@
  * override to a local address.  This is used when a host uses its own /64
  * and has no other addresses available.
  */
-// #define LOCAL_OVERRIDES_PORT0 yes
+#define LOCAL_OVERRIDES_PORT0 yes
