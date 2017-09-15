@@ -1,13 +1,13 @@
 all: 6bed4router 6bed4peer
 
-6bed4router: router.c nonstd.h
+6bed4router: 6bed4router.c nonstd.h
 	gcc -DLINUX -ggdb3 -o $@ $<
 
-6bed4peer: peer.c nonstd.h
+6bed4peer: 6bed4peer.c nonstd.h
 	gcc -DLINUX -ggdb3 -o $@ $<
 
-tags: router.c peer.c
-	ctags router.c peer.c nonstd.h
+tags: 6bed4router.c 6bed4peer.c
+	ctags 6bed4router.c 6bed4peer.c nonstd.h
 
 clean:
 	rm -f 6bed4router 6bed4peer tags
