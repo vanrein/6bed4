@@ -348,10 +348,10 @@ size_t icmp6_dest_linkaddr (size_t optidx) {
  */
 #ifdef LOCAL_OVERRIDES_PORT0
 static inline bool is_local_override (struct in6_addr *ip6) {
-	return ip6->s6addr [6] == 0;
+	return ip6->s6_addr16 [6] == 0;
 }
 #else
-#define is_local_override (ip6) false
+#define is_local_override(_) false
 #endif
 
 /*
