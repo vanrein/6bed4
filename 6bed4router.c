@@ -259,20 +259,18 @@ uint16_t icmp6_checksum (size_t payloadlen) {
  * ICMPv6 package counts after the ICMPv6 header.  It must be 4 (mod 8).
  *
  * Actions: v4/udp src becomes dest, set v4/udp/v6 src, len, cksum, send.
- *          v6 dest is provided (usually v4src6) but if it starts with
+ *          reply is always to v4src6, except that if it starts with
  *	    0x00,0x00 it will be replaced with allnodes_linklocal_address.
  */
-void icmp6_reply (size_t icmp6bodylen, struct in6_addr *dest) {
+void icmp6_reply (size_t icmp6bodylen) {
 	v4v6hoplimit = 255;
 	if ((icmp6bodylen & 0x07) != 4) {
 		return;   /* illegal length, drop */
 	}
 	v4v6plen = htons (icmp6bodylen + 4);
-	if ((* (uint16_t *) dest) == htons (0x0000)) {
-		memcpy (v4dst6, allnodes_linklocal_address, 16);
-	} else {
-		memcpy (v4dst6, v4src6, 16);
-	}
+	memcpy (v4dst6,
+		(v4src6->s6_addr16 [0]) ? v4src6 : allnodes_linklocal_address,
+		16);
 	memcpy (v4src6, router_linklocal_address, 16);
 	v4v6icmpcksum = icmp6_checksum (ntohs (v4v6plen));
 	//
@@ -413,7 +411,7 @@ void handle_6bed4_router_solicit (void) {
 	//TODO:DEPRECATED// writepos = icmp6_dest_linkaddr (writepos);
 	memcpy (&observed, v6listen_linklocal, 8);
 	addr_6bed4(&observed, (uint8_t *) &v4name.sin_addr.s_addr, ntohs(v4name.sin_port), 1);
-	icmp6_reply (writepos, &observed);
+	icmp6_reply (writepos);
 }
 
 
@@ -492,7 +490,7 @@ void handle_4to6_nd (ssize_t v4ngbcmdlen) {
 		v4v6icmpdata [20] = 2;		// Type: Target Link-Layer Addr
 		v4v6icmpdata [21] = 1;		// Length: 1x 8 bytes
 		memcpy (v4v6icmpdata + 22, lladdr_6bed4, 6);
-		icmp6_reply (28, v4src6);	// 28 is the ICMPv6 response length
+		icmp6_reply (28);	// 28 is the ICMPv6 response length
 		break;
 	case ND_ROUTER_ADVERT:
 	case ND_NEIGHBOR_ADVERT:
