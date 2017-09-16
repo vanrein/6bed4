@@ -271,7 +271,7 @@ void icmp6_reply (size_t icmp6bodylen, struct in6_addr *dest) {
 	if ((* (uint16_t *) dest) == htons (0x0000)) {
 		memcpy (v4dst6, allnodes_linklocal_address, 16);
 	} else {
-		memcpy (v4dst6, dest, 16);
+		memcpy (v4dst6, v4src6, 16);
 	}
 	memcpy (v4src6, router_linklocal_address, 16);
 	v4v6icmpcksum = icmp6_checksum (ntohs (v4v6plen));
