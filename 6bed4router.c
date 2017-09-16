@@ -165,15 +165,6 @@ uint8_t allrouters_linklocal_address [] = {
 	0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x02,
 };
 
-void addr_6bed4(struct in6_addr *dst_ip6, uint8_t *s_addr, int sin_port, int lanip) {
-
-	dst_ip6->s6_addr [8] = s_addr [0] & 0xfc;
-	memcpy (&dst_ip6->s6_addr [9], s_addr + 1, 3);
-	dst_ip6->s6_addr [12] = sin_port >> 8;
-	dst_ip6->s6_addr [13] = sin_port & 0xff;
-	dst_ip6->s6_addr [14] = (s_addr [0] & 0x03) << 6 | lanip >> 8;
-	dst_ip6->s6_addr [15] = lanip & 0xff;
-}
 
 /*
  *
@@ -233,6 +224,21 @@ int setup_tunnel (void) {
  */
 
 
+/* Produce an IPv6 address following the 6bed4 structures.
+ *  - The top half is taken from v6listen
+ *  - The bottom contains IPv4 address and port from v4name
+ *  - The last 14 bits are filled with the lanip parameter
+ */
+void addr_6bed4 (struct in6_addr *dst_ip6, uint16_t lanip) {
+	memcpy (&dst_ip6->s6_addr [0], &v6listen, 8);
+	dst_ip6->s6_addr32 [2] = v4name.sin_addr.s_addr;
+	dst_ip6->s6_addr16 [6] = v4name.sin_port;
+	dst_ip6->s6_addr  [14] = ((dst_ip6->s6_addr [8] & 0x03) << 6)
+	                       | ((lanip >> 8) & 0x3f);
+	dst_ip6->s6_addr  [15] = (lanip & 0xff);
+	dst_ip6->s6_addr  [8] &= 0xfc;
+}
+
 /* Calculate the ICMPv6 checksum field
  */
 uint16_t icmp6_checksum (size_t payloadlen) {
@@ -269,7 +275,9 @@ void icmp6_reply (size_t icmp6bodylen) {
 	}
 	v4v6plen = htons (icmp6bodylen + 4);
 	memcpy (v4dst6,
-		(v4src6->s6_addr16 [0]) ? v4src6 : allnodes_linklocal_address,
+		(v4src6->s6_addr16 [0])
+			? (uint8_t *) v4src6
+			: allnodes_linklocal_address,
 		16);
 	memcpy (v4src6, router_linklocal_address, 16);
 	v4v6icmpcksum = icmp6_checksum (ntohs (v4v6plen));
@@ -297,7 +305,7 @@ ntohs (v4name.sin_port),
 size_t icmp6_prefix (size_t optidx, uint8_t endlife) {
 	v4v6icmpdata [optidx++] = 3;	// Type
 	v4v6icmpdata [optidx++] = 4;	// Length
-	v4v6icmpdata [optidx++] = 64;	// This is a /64 prefix
+	v4v6icmpdata [optidx++] = 114;	// This is a /114 prefix
 	v4v6icmpdata [optidx++] = 0xc0;	// L=1, A=1, Reserved1=0
 	memset (v4v6icmpdata + optidx, endlife? 0x00: 0xff, 8);
 	optidx += 8;
@@ -306,8 +314,8 @@ size_t icmp6_prefix (size_t optidx, uint8_t endlife) {
 	memset (v4v6icmpdata + optidx, 0, 4);
 	optidx += 4;
 					// Reserved2=0
-	memcpy (v4v6icmpdata + optidx + 0, &v6listen, 8);
-	memset (v4v6icmpdata + optidx + 8, 0, 8);
+	addr_6bed4 ((struct in6_addr *) (v4v6icmpdata + optidx), 1);
+					// Set IPv6 prefix
 	optidx += 16;
 	return optidx;
 }
@@ -354,6 +362,7 @@ static inline bool is_local_override (struct in6_addr *ip6) {
 
 /*
  * Test if the provided IPv6 address matches the prefix used for 6bed4.
+ *TODO: This is oversimplistic, it only cares for the Hetzner /64
  */
 static inline bool is_6bed4 (struct in6_addr *ip6) {
 	return memcmp (&v6listen, ip6->s6_addr, 8) == 0;
@@ -363,24 +372,32 @@ static inline bool is_6bed4 (struct in6_addr *ip6) {
 /*
  * Validate the originator's IPv6 address.  It should match the
  * UDP/IPv4 coordinates of the receiving 6bed4 socket.  Also,
- * the /64 prefix must match that of v6listen.
+ * the /64 prefix (but not the /114 prefix!) must match v6listen.
  */
-bool validate_originator (struct sockaddr_in *sin, struct in6_addr *ip6) {
-	uint16_t port = ntohs (sin->sin_port);
-	uint32_t addr = ntohl (sin->sin_addr.s_addr);
-
-	if (!is_6bed4 (ip6)) {
+bool validate_originator (struct in6_addr *ip6) {
+	uint32_t addr;
+	//
+	// Require non-local top halves to match our v6listen_linklocal address
+	// We will enforce our own fallback address (and fc64:<port>)
+	if (memcmp (ip6, v6listen_linklocal, 8) != 0) {
+		if (memcmp (&v6listen, ip6->s6_addr, 8) != 0) {
+			return false;
+		}
+	}
+	//
+	// Require the sender port to appear in its IPv6 address
+	if (v4name.sin_port != ip6->s6_addr16 [6]) {
 		return false;
 	}
-	if ((port & 0xff) != ip6->s6_addr [13]) {
+	//
+	// Require the sender address to appear in its IPv6 address
+	addr = ntohl (ip6->s6_addr32 [2]) & 0xfcffffff;
+	addr |= ((uint32_t) (ip6->s6_addr [14] & 0xc0)) << (24-6);
+	if (addr != ntohl (v4name.sin_addr.s_addr)) {
 		return false;
 	}
-	if ((port >> 8) != ip6->s6_addr [12]) {
-		return false;
-	}
-	if (addr != ((ntohl(ip6->s6_addr32 [2]) & 0xfcffffff) | (((uint32_t) ip6->s6_addr [14] & 0xc0) << 18))) {
-		return false;
-	}
+	//
+	// We passed with flying colours
 	return true;
 }
 
@@ -408,9 +425,6 @@ void handle_6bed4_router_solicit (void) {
 					// Retrans Timer: max
 	writepos += 2+4+4;
 	writepos = icmp6_prefix (writepos, 0);
-	//TODO:DEPRECATED// writepos = icmp6_dest_linkaddr (writepos);
-	memcpy (&observed, v6listen_linklocal, 8);
-	addr_6bed4(&observed, (uint8_t *) &v4name.sin_addr.s_addr, ntohs(v4name.sin_port), 1);
 	icmp6_reply (writepos);
 }
 
@@ -465,7 +479,7 @@ void handle_4to6_nd (ssize_t v4ngbcmdlen) {
 	case ND_NEIGHBOR_SOLICIT:
 		//
 		// Validate Neigbour Solicitation
-		if (!validate_originator (&v4name, v4src6)) {
+		if (!validate_originator (v4src6)) {
 			break;	/* bad source address, drop */
 		}
 		if ((v4ngbcmdlen != sizeof (struct ip6_hdr) + 24) &&
@@ -578,7 +592,7 @@ void handle_4to6 (void) {
 		// Plain Unicast
 		if (is_local_override (v4dst6)) {
 			handle_4to6_plain_unicast (buflen);
-		} else if (validate_originator (&v4name, v4src6)) {
+		} else if (validate_originator (v4src6)) {
 			if (v4v6hoplimit-- <= 1) {
 				return;
 			}
@@ -842,8 +856,7 @@ int main (int argc, char *argv []) {
 	lladdr_6bed4 [0] = UDP_PORT_6BED4 & 0xff;
 	lladdr_6bed4 [1] = UDP_PORT_6BED4 >> 8;
 	memcpy (lladdr_6bed4 + 2, (uint8_t *) &v4name.sin_addr, 4);
-	memcpy (&v6listen_complete, &v6listen, 8);
-	addr_6bed4(&v6listen_complete, lladdr_6bed4 + 2, ntohs(v4name.sin_port), 0);
+	addr_6bed4 (&v6listen_complete, 0);
 
 	memcpy (v6listen_linklocal_complete, v6listen_linklocal, 8);
 	memcpy (v6listen_linklocal_complete + 8, &v6listen_complete.s6_addr [8], 8);

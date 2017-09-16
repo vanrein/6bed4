@@ -355,6 +355,22 @@ syslog (LOG_CRIT, "Bad news!\n");
  */
 
 
+
+/* Produce an IPv6 address following the 6bed4 structures.
+ *  - The top half is taken from v6listen
+ *  - The bottom contains IPv4 address and port from v4name
+ *  - The last 14 bits are filled with the lanip parameter
+ */
+void addr_6bed4 (struct in6_addr *dst_ip6, uint16_t lanip) {
+	memcpy (&dst_ip6->s6_addr [0], &v6listen, 8);
+	dst_ip6->s6_addr32 [2] = v4name.sin_addr.s_addr;
+	dst_ip6->s6_addr16 [6] = v4name.sin_port;
+	dst_ip6->s6_addr  [14] = ((dst_ip6->s6_addr [8] & 0x03) << 6)
+	                       | ((lanip >> 8) & 0x3f);
+	dst_ip6->s6_addr  [15] = (lanip & 0xff);
+	dst_ip6->s6_addr  [8] &= 0xfc;
+}
+
 /* Look for an entry in the 50ms-cycled Neighbor Discovery queue.
  * Match the target address.  Return the entry found, or NULL.
  */
@@ -518,7 +534,7 @@ void redirect_reply (uint8_t *ngbc_llremote, metric_t ngbc_metric) {
 size_t icmp6_prefix (size_t optidx, uint8_t endlife) {
 	v6icmp6data [optidx++] = 3;	// Type
 	v6icmp6data [optidx++] = 4;	// Length
-	v6icmp6data [optidx++] = 64;	// This is a /64 prefix
+	v6icmp6data [optidx++] = 114;	// This is a /114 prefix
 #ifndef COMPENSATE_FOR_AUTOCONF
 	v6icmp6data [optidx++] = 0xc0;	// L=1, A=1, Reserved1=0
 #else
@@ -532,8 +548,7 @@ size_t icmp6_prefix (size_t optidx, uint8_t endlife) {
 	memset (v6icmp6data + optidx, 0, 4);
 	optidx += 4;
 					// Reserved2=0
-	memcpy (v6icmp6data + optidx + 0, &v6listen, 8);
-	memset (v6icmp6data + optidx + 8, 0, 8);
+	addr_6bed4 ((struct in6_addr *) (v6icmp6data + optidx), 0);
 					// Set IPv6 prefix
 	optidx += 16;
 	return optidx;
@@ -588,40 +603,42 @@ void advertise_6bed4_public_service (struct ndqueue *info) {
 
 
 /*
- * Test if the provided IPv6 address matches the prefix used for 6bed4.
- */
-static inline bool prefix_6bed4 (struct in6_addr *ip6) {
-	return memcmp (&v6listen, ip6->s6_addr, 8) == 0;
-}
-
-
-/*
  * Validate the originator's IPv6 address.  It should match the
  * UDP/IPv4 coordinates of the receiving 6bed4 socket.  Also,
- * the /64 prefix must match that of v6listen.
+ * the /64 prefix (but not the /114 prefix!) must match v6listen.
  */
-bool validate_originator (struct sockaddr_in *sin, struct in6_addr *ip6) {
-	if ((sin->sin_addr.s_addr == v4peer.sin_addr.s_addr) && (sin->sin_port == v4peer.sin_port)) {
+bool validate_originator (struct in6_addr *ip6) {
+	uint32_t addr;
+	//
+	// Communication from the configured router is welcomed
+	//TODO// Why should we trust the ip6 address at face value?
+	if ((v4name.sin_addr.s_addr == v4peer.sin_addr.s_addr)
+			&& (v4name.sin_port == v4peer.sin_port)) {
 		return true;
 	}
-	uint16_t port = ntohs (sin->sin_port);
-	uint32_t addr = ntohl (sin->sin_addr.s_addr);
-if (memcmp (ip6, v6listen_linklocal, 8) != 0)
-	if (!prefix_6bed4 (ip6)) {
+	//
+	// Require non-local top halves to match our v6listen_linklocal address
+	//TODO// When do we receive local top halves?
+	//TODO// We should really be more flexible and allow fallback addrs
+	if (memcmp (ip6, v6listen_linklocal, 8) != 0) {
+		if (memcmp (&v6listen, ip6->s6_addr, 8) != 0) {
+			return false;
+		}
+	}
+	//
+	// Require the sender port to appear in its IPv6 address
+	if (v4name.sin_port != ip6->s6_addr16 [6]) {
 		return false;
 	}
-	if ((port & 0xff) != (ip6->s6_addr [8] ^ 0x02)) {
+	//
+	// Require the sender address to appear in its IPv6 address
+	addr = ntohl (ip6->s6_addr32 [2]) & 0xfcffffff;
+	addr |= ((uint32_t) (ip6->s6_addr [14] & 0xc0)) << (24-6);
+	if (addr != ntohl (v4name.sin_addr.s_addr)) {
 		return false;
 	}
-	if ((port >> 8) != ip6->s6_addr [9]) {
-		return false;
-	}
-	if ((addr >> 24) != ip6->s6_addr [10]) {
-		return false;
-	}
-	if ((addr & 0x00ffffff) != (htonl (ip6->s6_addr32 [3]) & 0x00ffffff)) {
-		return false;
-	}
+	//
+	// We passed with flying colours
 	return true;
 }
 
@@ -864,7 +881,8 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 				return;   /* out of packet length */
 			} else if (v4v6icmpdata [rdofs + 3] & 0xc0 != 0xc0) {
 				/* no on-link autoconfig prefix */
-			} else if (v4v6icmpdata [rdofs + 2] != 64) {
+			} else if (v4v6icmpdata [rdofs + 2] != 114) {
+				/* not a /114 prefix, so no 6bed4 offer */
 				return;
 			} else {
 				destprefix = &v4v6icmpdata [rdofs + 16];
@@ -872,15 +890,16 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 			rdofs += (v4v6icmpdata [rdofs + 1] << 3);
 		}
 		if (destprefix) {
-			memcpy (v6listen.s6_addr + 0, destprefix, 8);
-			memcpy (v6listen.s6_addr + 8, v4dst6->s6_addr + 8, 8);
-			memcpy (v6listen_linklocal_complete, v4dst6, 16);
-			v6lladdr [0] = v6listen_linklocal_complete [8] ^ 0x02;
-			v6lladdr [1] = v6listen_linklocal_complete [9];
-			v6lladdr [2] = v6listen_linklocal_complete [10];
-			v6lladdr [3] = v6listen_linklocal_complete [13];
-			v6lladdr [4] = v6listen_linklocal_complete [14];
-			v6lladdr [5] = v6listen_linklocal_complete [15];
+			memcpy (v6listen.s6_addr + 0, destprefix, 14);
+			v6listen.s6_addr [14] &= 0xc0;
+			v6listen.s6_addr [15]  = 0x00;
+			memcpy (v6listen_linklocal_complete+0,
+					v6listen_linklocal, 8);
+			memcpy (v6listen_linklocal_complete+8,
+					v6listen.s6_addr+8, 8);
+			memcpy (v6lladdr, v6listen_linklocal_complete+8, 8);
+			v6lladdr [0] &= 0xfc;
+			v6lladdr [0] |= (v6listen_linklocal_complete [14] >> 6);
 			inet_ntop (AF_INET6,
 				&v6listen,
 				v6prefix,
@@ -1034,7 +1053,7 @@ void handle_4to6 (int v4in) {
 	if ((v4data [0] & 0xf0) != 0x60) {
 		return;		/* not an IPv6 packet, drop */
 	}
-	if (!validate_originator (&v4name, v4src6)) {
+	if (!validate_originator (v4src6)) {
 		return;		/* source appears fake, drop */
 	}
 	/*
