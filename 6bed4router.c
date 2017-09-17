@@ -359,7 +359,7 @@ size_t icmp6_dest_linkaddr (size_t optidx) {
  */
 #ifdef LOCAL_OVERRIDES_PORT0
 static inline bool is_local_override (struct in6_addr *ip6) {
-	return ip6->s6_addr16 [6] == 0;
+	return (ip6->s6_addr16 [6] == 0) && (memcmp (ip6->s6_addr, &v6listen, 8) == 0);
 }
 #else
 #define is_local_override(_) false
@@ -371,6 +371,14 @@ static inline bool is_local_override (struct in6_addr *ip6) {
  */
 static inline bool is_6bed4 (struct in6_addr *ip6) {
 	return memcmp (&v6listen, ip6->s6_addr, 8) == 0;
+}
+
+/* Test if the provided IPv6 address matches the fc64::/16 prefix.
+ * If so, the traffic may be bounced using 6bed4 traffic, but it
+ * must not be relayed to the native IPv6 side.
+ */
+static inline bool is_fc64 (struct in6_addr *ip6) {
+	return ip6->s6_addr16 [0] == htons (0xfc64);
 }
 
 
@@ -533,11 +541,12 @@ printf ("Writing IPv6, result = %zd\n",
 
 /*
  * Forward a 6bed4 message to another 6bed4 destination address.
+ * Local address prefixes fc64:<netid>:<ipv4>::/64 are also relayed.
  * Note that existing checksums will work well, as only the
  * Hop Limit has been altered, and this is not part of the
  * checksum calculations.
  */
-void relay_6bed4_plain_unicast (uint8_t* data, ssize_t v4datalen, struct in6_addr *ip6) {
+void relay_4to4_plain_unicast (uint8_t* data, ssize_t v4datalen, struct in6_addr *ip6) {
 	v4name.sin_port = htons (ip6->s6_addr [12] << 8 | ip6->s6_addr [13]);
 	uint8_t *addr = (uint8_t *) &v4name.sin_addr.s_addr;
 	addr [0] = (ip6->s6_addr [8] & 0xfc) | ip6->s6_addr [14] >> 6;
@@ -601,8 +610,8 @@ void handle_4to6 (void) {
 			if (v4v6hoplimit-- <= 1) {
 				return;
 			}
-			if (is_6bed4 (v4dst6)) {
-				relay_6bed4_plain_unicast (v4data, buflen, v4dst6);
+			if (is_6bed4 (v4dst6) || is_fc64 (v4dst6)) {
+				relay_4to4_plain_unicast (v4data, buflen, v4dst6);
 			} else {
 				handle_4to6_plain_unicast (buflen);
 			}
@@ -654,12 +663,23 @@ printf ("Received plain unicast IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tunc
 	//
 	// Ensure that the incoming IPv6 address is properly formatted
 	// Note that this avoids access to ::1/128, fe80::/10, fec0::/10
+#ifndef TODO_PERMIT_BOUNCE_FOR_32BIT_PREFIX
 	if (memcmp (v6dst6, &v6listen, 8) != 0) {
 		return;
 	}
+#else
+	if (v6dst6->s6_addr32 [0] != v6listen.s6_addr32 [0]) {
+		// Mismatch /32 so this is not going to fly (anywhere)
+		return;
+	} else if (v6dst6->s6_addr32 [1] != v6listen.s6_addr32 [1]) {
+		// Match /32 but mismatch /64 -- relay to proper fallback
+		// that fc64::/16 is not welcome in 6to4 processing
+		//TODO//OVER_6bed4// relay_6to6_plain_unicast (v6data, rawlen - sizeof (struct tun_pi), v6dst6);
+	}
+#endif
 	//
 	// Harvest socket address data from destination IPv6, then send
-	relay_6bed4_plain_unicast (v6data, rawlen - sizeof (struct tun_pi), v6dst6);
+	relay_4to4_plain_unicast (v6data, rawlen - sizeof (struct tun_pi), v6dst6);
 }
 
 
