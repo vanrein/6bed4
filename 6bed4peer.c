@@ -234,7 +234,7 @@ uint8_t router_linklocal_address_complete [] = {
 	0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00,
 };
 
-uint8_t democlient_linklocal_address [] = {
+uint8_t client1_linklocal_address [] = {
 	0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x01,
 };
 
@@ -848,11 +848,13 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 		if (v4v6icmpdata [1] & 0x80 != 0x00) {
 			return;   /* indecent proposal to use DHCPv6, drop */
 		}
-		if (memcmp (v4src6, router_linklocal_address, 16) != 0) {
+		if (memcmp (&v4src6->s6_addr, router_linklocal_address, 16) != 0) {
 			return;   /* not from router, drop */
 		}
-		if (memcmp (v4dst6, democlient_linklocal_address, 8) != 0) {
-			return;   /* no address setup for me, drop */
+		if (memcmp (&v4dst6->s6_addr, client1_linklocal_address, 8) != 0) {
+			if (memcmp (&v4dst6->s6_addr, allnodes_linklocal_address, 16) != 0) {
+				return;   /* no address setup for me, drop */
+			}
 		}
 		if (v4dst6->s6_addr [8] & 0x01) {
 			syslog (LOG_WARNING, "TODO: Ignoring (by accepting) an odd public UDP port revealed in a Router Advertisement -- this could cause confusion with multicast traffic\n");
@@ -892,12 +894,13 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 		if (destprefix) {
 			memcpy (v6listen.s6_addr + 0, destprefix, 14);
 			v6listen.s6_addr [14] &= 0xc0;
-			v6listen.s6_addr [15]  = 0x00;
+			v6listen.s6_addr [15]  = 0x01;	// choose client 1
 			memcpy (v6listen_linklocal_complete+0,
 					v6listen_linklocal, 8);
 			memcpy (v6listen_linklocal_complete+8,
 					v6listen.s6_addr+8, 8);
 			memcpy (v6lladdr, v6listen_linklocal_complete+8, 8);
+			//TODO// Is v6lladdr useful?  Should it include lanip?
 			v6lladdr [0] &= 0xfc;
 			v6lladdr [0] |= (v6listen_linklocal_complete [14] >> 6);
 			inet_ntop (AF_INET6,
