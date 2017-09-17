@@ -215,6 +215,7 @@ int setup_tunnel (void) {
 	}
 	if (!ok) {
 		close (v6sox);	/* This removes the tunnel interface */
+		fprintf (stderr, "Failed to setup tunnel \"%s\"\n", INTERFACE_NAME_6BED4);
 	}
 	return ok;
 }
