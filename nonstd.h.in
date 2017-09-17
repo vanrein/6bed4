@@ -39,3 +39,7 @@
  * and has no other addresses available.
  */
 // #define LOCAL_OVERRIDES_PORT0 yes
+
+/* Possibly override the name of the interface from the default "6bed4"
+ */
+// #define INTERFACE_NAME_6BED4 "6bed4"

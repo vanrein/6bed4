@@ -172,6 +172,10 @@ uint8_t allrouters_linklocal_address [] = {
  *
  */
 
+#ifndef INTERFACE_NAME_6BED4
+#define INTERFACE_NAME_6BED4 "6bed4"
+#endif
+
 #ifdef LINUX
 #define HAVE_SETUP_TUNNEL
 /* Implement the setup_tunnel() command for Linux.
@@ -186,7 +190,7 @@ int setup_tunnel (void) {
 	int ok = 1;
 	struct ifreq ifreq;
 	memset (&ifreq, 0, sizeof (ifreq));
-	strncpy (ifreq.ifr_name, "6bed4", IFNAMSIZ);
+	strncpy (ifreq.ifr_name, INTERFACE_NAME_6BED4, IFNAMSIZ);
 	ifreq.ifr_flags = IFF_TUN;
 	if (ok && (ioctl (v6sox, TUNSETIFF, (void *) &ifreq) == -1)) {
 		ok = 0;
@@ -314,7 +318,7 @@ size_t icmp6_prefix (size_t optidx, uint8_t endlife) {
 	memset (v4v6icmpdata + optidx, 0, 4);
 	optidx += 4;
 					// Reserved2=0
-	addr_6bed4 ((struct in6_addr *) (v4v6icmpdata + optidx), 1);
+	addr_6bed4 ((struct in6_addr *) (v4v6icmpdata + optidx), 0);
 					// Set IPv6 prefix
 	optidx += 16;
 	return optidx;
