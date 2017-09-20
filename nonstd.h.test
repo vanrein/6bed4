@@ -19,10 +19,10 @@
 
 #warning "Build uses temporary IPv4 address information"
 
-#define SERVER_6BED4_IPV4_TXT			"145.135.0.1"
-#define SERVER_6BED4_IPV4_INT32			( (145L << 24) | (135L << 16) | (0L << 8) | 1L )
+#define SERVER_6BED4_IPV4_TXT			"145.136.0.1"
+#define SERVER_6BED4_IPV4_INT32			( (145L << 24) | (136L << 16) | (0L << 8) | 1L )
 #define SERVER_6BED4_IPV4_INT0			145
-#define SERVER_6BED4_IPV4_INT1			135
+#define SERVER_6BED4_IPV4_INT1			136
 #define SERVER_6BED4_IPV4_INT2			0
 #define SERVER_6BED4_IPV4_INT3			1
 #define SERVER_6BED4_IPV4_BINSTR		"\x91\x88\x00\x01"
