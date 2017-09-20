@@ -376,6 +376,7 @@ static inline bool is_6bed4 (struct in6_addr *ip6) {
 /* Test if the provided IPv6 address matches the fc64::/16 prefix.
  * If so, the traffic may be bounced using 6bed4 traffic, but it
  * must not be relayed to the native IPv6 side.
+ * TODO: Perhaps allow only configured <netid>, so fc64:<netid>::/32
  */
 static inline bool is_fc64 (struct in6_addr *ip6) {
 	return ip6->s6_addr16 [0] == htons (0xfc64);
@@ -391,7 +392,7 @@ bool validate_originator (struct in6_addr *ip6) {
 	uint32_t addr;
 	//
 	// Require non-local top halves to match our v6listen_linklocal address
-	// We will enforce our own fallback address (and fc64:<port>)
+	// We will enforce our own fallback address (and fc64:<netid>::/32)
 	if (memcmp (ip6, v6listen_linklocal, 8) != 0) {
 		if (memcmp (&v6listen, ip6->s6_addr, 8) != 0) {
 			return false;
