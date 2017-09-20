@@ -45,9 +45,14 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
+#include <netinet/tcp.h>
 #include <netinet/udp.h>
 #include <netinet/icmp6.h>
 #include <arpa/inet.h>
+
+#ifndef BE_SO_LAME_TO_SUPPRESS_SCTP
+#include <linux/sctp.h>
+#endif
 
 #include <linux/if.h>
 #include <linux/if_tun.h>
@@ -64,9 +69,9 @@
 
 /*
  * The HAVE_SETUP_TUNNEL variable is used to determine whether absense of
- * the -t option leads to an error, or to an attempt to setup the tunnel.
+ * the -d option leads to an error, or to an attempt to setup the tunnel.
  * The setup_tunnel() function used for that is defined per platform, such
- * as for LINUX.  Remember to maintain the manpage's optionality for -t.
+ * as for LINUX.  Remember to maintain the manpage's optionality for -d.
  */
 #undef HAVE_SETUP_TUNNEL
 
@@ -105,6 +110,11 @@ struct {
 		struct {
 			struct ip6_hdr v6hdr;
 			struct icmp6_hdr v6icmphdr;
+#ifndef BE_SO_LAME_TO_SUPPRESS_SCTP
+			struct sctphdr v6sctphdr;
+#endif
+			struct tcphdr  v6tcphdr ;
+			struct udphdr  v6udphdr ;
 		} ndata;
 	} udata;
 } v4data6;
@@ -124,6 +134,15 @@ struct {
 #define v4v6icmptype	( v4data6.udata.ndata.v6icmphdr.icmp6_type)
 #define v4v6icmpcode	( v4data6.udata.ndata.v6icmphdr.icmp6_code)
 #define v4v6icmpcksum	( v4data6.udata.ndata.v6icmphdr.icmp6_cksum)
+
+#define v4v6sctpsrcport	( v4data6.udata.ndata.v6sctphdr.source)
+#define v4v6sctpdstport	( v4data6.udata.ndata.v6sctphdr.dest)
+
+#define v4v6tcpsrcport	( v4data6.udata.ndata.v6tcphdr.source)
+#define v4v6tcpdstport	( v4data6.udata.ndata.v6tcphdr.dest)
+
+#define v4v6udpsrcport	( v4data6.udata.ndata.v6udphdr.source)
+#define v4v6udpdstport	( v4data6.udata.ndata.v6udphdr.dest)
 
 #define v4ngbsoltarget	(&v4data6.udata.ndata.v6icmphdr.icmp6_data8 [4])
 
@@ -164,6 +183,26 @@ uint8_t allnodes_linklocal_address [] = {
 uint8_t allrouters_linklocal_address [] = {
 	0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x02,
 };
+
+
+
+#ifndef MAXNUM_MASQHOST
+#define MAXNUM_MASQHOST 4
+#endif
+
+uint16_t num_masqhost = 0;
+uint8_t masqhost [MAXNUM_MASQHOST][16];
+
+// ports for 's', 't', 'u' -- SCTP, TCP, UDP have increasing numbers
+
+#ifndef MAXNUM_PORTPAIRS
+#define MAXNUM_PORTPAIRS 10
+#endif
+
+// masqportpairs holds triples <lowport,highport,masqhostnr>
+uint16_t num_masqportpairs [3] = { 0, 0, 0 };
+uint16_t masqportpairs [3][3*MAXNUM_PORTPAIRS];
+
 
 
 /*
@@ -365,6 +404,7 @@ static inline bool is_local_override (struct in6_addr *ip6) {
 #define is_local_override(_) false
 #endif
 
+
 /*
  * Test if the provided IPv6 address matches the prefix used for 6bed4.
  *TODO: This is oversimplistic, it only cares for the Hetzner /64
@@ -414,6 +454,19 @@ bool validate_originator (struct in6_addr *ip6) {
 	// We passed with flying colours
 	return true;
 }
+
+
+
+/*
+ * Given a protocol and a port number, locate the masqhost that would match.
+ * The protocol is 0 for SCTP, 1 for TCP, 2 for UDP (alphabetic sequence).
+ * Returns a pointer to the address or NULL if not found.
+ */
+uint8_t *protoport2masqhost (uint8_t proto, uint16_t port) {
+	//NOTUSED// TODO:IMPLEMENT
+	return NULL;
+}
+
 
 
 /*
@@ -535,6 +588,49 @@ void handle_4to6_nd (ssize_t v4ngbcmdlen) {
  * checksum calculations.
  */
 void handle_4to6_plain_unicast (ssize_t v4datalen) {
+	//
+	// Masquerade the 6bed4router when addressing a configured port (range)
+	// but only when the destination address is the client's 6bed4router
+	if ((v4dst6->s6_addr [15] == 0x00)
+			&& (v4dst6->s6_addr [14] & 0x3f == 0x00)
+			&& (memcmp (v4dst6, v4src6, 14) == 0)) {
+		uint16_t *portpairs = NULL;
+		uint16_t numpairs = 0;
+		uint16_t port;
+		switch (v4v6nexthdr) {
+#ifndef BE_SO_LAME_TO_SUPPRESS_SCTP
+		case IPPROTO_SCTP:
+			portpairs = masqportpairs [0];	// 's'
+			numpairs  = num_masqportpairs [0];
+			port = ntohs (v4v6srcport);
+			break;
+#endif
+		case IPPROTO_TCP:
+			portpairs = masqportpairs [1];	// 't'
+			numpairs  = num_masqportpairs [1];
+			port = v4v6tcpsrcport;
+			break;
+		case IPPROTO_UDP:
+			portpairs = masqportpairs [2];	// 'u'
+			numpairs  = num_masqportpairs [2];
+			port = v4v6udpsrcport;
+			break;
+		default:
+			break;
+		}
+		while (numpairs-- > 0) {
+			if ((port >= portpairs [0]) && (port <= portpairs [1])) {
+				//
+				// Replace masqueraded address by 6bed4router's
+				memcpy (v4dst6, masqhost [portpairs [2]], 16);
+				//
+				// Stop further attempts to masquerade
+			}
+			portpairs += 2;
+		}
+	}
+	//
+	// Relay the message to an IPv6 recipient on the native IPv6 side
 printf ("Writing IPv6, result = %zd\n",
 	write (v6sox, &v4data6, sizeof (struct tun_pi) + v4datalen));
 }
@@ -635,6 +731,7 @@ void handle_4to6 (void) {
  * port, then package it as a tunnel message and forward it to IPv4:port.
  */
 void handle_6to4 (void) {
+	uint16_t mqh;
 	//
 	// Receive the IPv6 package and ensure a consistent size
 	size_t rawlen = read (v6sox, &v6data6, sizeof (v6data6));
@@ -661,6 +758,18 @@ printf ("Received multicast IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.f
 		return;		/* multicast, drop */
 	}
 printf ("Received plain unicast IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tuncmd.flags, v6tuncmd.proto);
+	//
+	// Replace masqueraded addresses configured with -m and its default ::1
+	//TODO// Better use the port number to find the find the masqhost
+	for (mqh=0; mqh<num_masqhost; mqh++) {
+		if (memcmp (v6src6, masqhost [mqh], 16) == 0) {
+printf ("Masqueraded sender address in 6to4 set to the client's 6bed4router address\n");
+			memcpy (v6src6, v6dst6, 15);
+			v6src6->s6_addr [15] &= 0xc0;
+			v6src6->s6_addr [16]  = 0x00;
+			break;
+		}
+	}
 	//
 	// Ensure that the incoming IPv6 address is properly formatted
 	// Note that this avoids access to ::1/128, fe80::/10, fec0::/10
@@ -712,13 +821,19 @@ fflush (stdout);
 
 /* Option descriptive data structures */
 
-char *short_opt = "l:L:t:h";
+char *short_opt = "l:L:d:ht:u:s:m:";
 
 struct option long_opt [] = {
 	{ "v4listen", 1, NULL, 'l' },
 	{ "v6prefix", 1, NULL, 'L' },
-	{ "tundev", 1, NULL, 't' },
+	{ "tundev", 1, NULL, 'd' },
 	{ "help", 0, NULL, 'h' },
+	{ "tcp", 1, NULL, 't' },
+	{ "udp", 1, NULL, 'u' },
+	{ "sctp", 1, NULL, 's' },
+	{ "masqhost", 1, NULL, 'm' },
+	// { "fallback4", 1 NULL, 'f' },
+	// { "fallback6", 1, NULL, 'F' },
 	{ NULL, 0, NULL, 0 }	/* Array termination */
 };
 
@@ -729,8 +844,9 @@ int process_args (int argc, char *argv []) {
 	int ok = 1;
 	int help = (argc == 1);
 	int done = 0;
+	int opt;
 	while (!done) {
-		switch (getopt_long (argc, argv, short_opt, long_opt, NULL)) {
+		switch (opt = getopt_long (argc, argv, short_opt, long_opt, NULL)) {
 		case -1:
 			done = 1;
 			if (optind != argc) {
@@ -790,10 +906,10 @@ int process_args (int argc, char *argv []) {
 				break;
 			}
 			break;
-		case 't':
+		case 'd':
 			if (v6sox != -1) {
 				ok = 0;
-				fprintf (stderr, "%s: Multiple -t arguments are not permitted\n", program);
+				fprintf (stderr, "%s: Multiple -d arguments are not permitted\n", program);
 				break;
 			}
 			v6sox = open (optarg, O_RDWR);
@@ -803,9 +919,77 @@ int process_args (int argc, char *argv []) {
 				break;
 			}
 			break;
+		case 's':
+		case 't':
+		case 'u':
+			// Masqueraded port (range) for SCTP, TCP, UDP
+			//TODO// Should we support ICMPv6 as well? [honeypots]
+			if (num_masqhost == 0) {
+				inet_pton (AF_INET6, "::1", masqhost [0]);
+				num_masqhost = 1;
+			}
+			// Temporary variables in local scope
+			{
+				unsigned long fromport, toport;
+				uint16_t *portpairs;
+				errno = 0;
+				if (*optarg != ':') {
+					fromport = strtoul (optarg, &optarg, 10);
+				} else {
+					fromport = 1;
+				}
+				if (*optarg != ':') {
+					toport = fromport;
+				} else if (*++optarg) {
+					toport = strtoul (optarg, &optarg, 10);
+				} else {
+					toport = 65535;
+				}
+				if (errno || *optarg) {
+					fprintf (stderr, "%s: Failed to parse port or port:port\n", program);
+					ok = 0;
+					break;
+				}
+				if ((fromport < 1) || (fromport > toport) || (toport > 65535)) {
+					fprintf (stderr, "%s: Invalid port or port range\n", program);
+					ok = 0;
+					break;
+				}
+				if (++num_masqportpairs [opt-'s'] >= MAXNUM_PORTPAIRS) {
+					fprintf (stderr, "%s: You cannot define so many ports / port pairs\n", program);
+					ok = 0;
+					break;
+				}
+				portpairs = &masqportpairs [opt-'s'][3*(num_masqportpairs [opt-'s']-1)];
+				portpairs [0] = fromport;
+				portpairs [1] = toport;
+				portpairs [2] = num_masqhost-1;
+			}
+			break;
+		case 'm':
+			// Masqueraded host for TCP, UDP, SCTP (default is ::1)
+			if (++num_masqhost >= MAXNUM_MASQHOST) {
+				fprintf (stderr, "%s: No more than %d masquering hosts can be specified\n", program, MAXNUM_MASQHOST);
+				ok = 0;
+				break;
+			}
+			if (inet_pton (AF_INET6, optarg, masqhost [num_masqhost]) != 1) {
+				fprintf (stderr, "%s: Unsupported masquerading host \"%s\"\n", program, optarg);
+				ok = 0;
+				break;
+			}
+			num_masqhost++;
+			ok = 0;	//TODO:IMPLEMENT//
+			help = 1;
+			break;
+		// case 'f':
+		// case 'F':
+		// 	// Fallback addresses for IPv4, IPv6
+		// 	ok = 0;	//TODO:IMPLEMENT//
+		// 	help = 1;
+		// 	break;
 		default:
 			ok = 0;
-			help = 1;
 			/* continue into 'h' to produce usage information */
 		case 'h':
 			help = 1;
@@ -817,9 +1001,11 @@ int process_args (int argc, char *argv []) {
 	}
 	if (help) {
 #ifdef HAVE_SETUP_TUNNEL
-		fprintf (stderr, "Usage: %s [-t /dev/tunX] -l <v4server> -L <v6prefix>/64\n       %s -h\n", program, program);
+		fprintf (stderr, "Usage: %s [-d /dev/tunX] -l <v4server> -L <v6prefix>/64\n       %s -h\n", program, program);
+		fprintf (stderr, "\tUse -s|-t|-u to masquerade a port (range) to last -m host or ::1\n");
 #else
-		fprintf (stderr, "Usage: %s -t /dev/tunX -l <v4server> -L <v6prefix>/64\n       %s -h\n", program, program);
+		fprintf (stderr, "Usage: %s -d /dev/tunX -l <v4server> -L <v6prefix>/64\n       %s -h\n", program, program);
+		fprintf (stderr, "\tUse -s|-t|-u to masquerade a port (range) to last -m host of ::1\n");
 #endif
 		return ok;
 	}
@@ -837,14 +1023,14 @@ int process_args (int argc, char *argv []) {
 #ifdef HAVE_SETUP_TUNNEL
 	if (v6sox == -1) {
 		if (geteuid () != 0) {
-			fprintf (stderr, "%s: You should be root, or use -t to specify an accessible tunnel device\n", program);
+			fprintf (stderr, "%s: You should be root, or use -d to specify an accessible tunnel device\n", program);
 			return 0;
 		}
 		ok = setup_tunnel ();
 	}
 #else /* ! HAVE_SETUP_TUNNEL */
 	if (v6sox == -1) {
-		fprintf (stderr, "%s: You must specify a tunnel device with -t that is accessible to you\n", program);
+		fprintf (stderr, "%s: You must specify a tunnel device with -d that is accessible to you\n", program);
 		return 0;
 	}
 #endif /* HAVE_SETUP_TUNNEL */

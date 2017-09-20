@@ -15,7 +15,7 @@
 6bed4client \- client-side daemon for instant-on IPv6 service
 .SH SYNOPSYS
 .B 6bed4client
-[\fB\-t\fR \fI/dev/tunX\fR] [\fB\-d\fR] [\fB\-f\fR] [\fB\-l\fR \fIv4addr\fR] [\fB\-p\fR \fIport\fR] [\fB\-r\fR \fIhops\fR] [\fB-s \fIv4addr\fR]
+[\fB\-d\fR \fI/dev/tunX\fR] [\fB\-r\fR] [\fB\-f\fR] [\fB\-l\fR \fIv4addr\fR] [\fB\-p\fR \fIport\fR] [\fB\-t\fR \fIhops\fR] [\fB-s \fIv4addr\fR]
 .PP
 .B 6bed4client
 [\fB\-h\fR]
@@ -88,7 +88,7 @@ can be used to support reception of incoming 6bed4 traffic on the
 forwarded port.
 .SH OPTIONS
 .TP
-\fB\-t\fR \fI/dev/tunX\fR
+\fB\-d\fR \fI/dev/tunX\fR
 .TP
 \fB\-\-tundev\fR \fI/dev/tunX\fR
 Instead of creating a tunnel for the duration that \fB6bed4server\fR runs,
@@ -97,7 +97,7 @@ the proper IPv6 prefix.  This option makes it possible for
 non-root users to run \fB6bed4server\fR.  All that is required is acccess to
 the tunnel device by the user that runs \fB6bed4server\fR.  Optional on Linux.
 .TP
-\fB\-d\fR
+\fB\-r\fR
 .TP
 \fB\-\-default\-route\fR
 Create a default route through the 6bed4 interface.  This means that the
@@ -158,9 +158,9 @@ it is only needed to get outside NAT and firewalls, but not to reach
 the central infrastructure.  The default is \fB\-\-keepalive 30,3\fR
 and may be automatically determined in future versions.
 .TP
-\fB\-r\fR \fIhops\fR
+\fB\-t\fR \fIhops\fR
 .TP
-\fB\-\-radius\fR \fIhops\fR
+\fB\-\-ttl\fR \fIhops\fR
 Set the multicast radius to the given number of hops, the default being 1.
 This number is used as the TTL on multicast messages, thereby determining
 whether routers are permitted to forward these packets.  The value 0
@@ -193,7 +193,7 @@ only fail with that other party.
 Whenever possible, 6bed4 connections are connected directly over the locally
 attached network.  This optimises the traffic by not passing it through an
 external router.  But it also implies trust in the peers on a local network;
-for this reason, it is possible to set \fB\-\-radius 0\fR and thereby
+for this reason, it is possible to set \fB\-\-ttl 0\fR and thereby
 disable the attempts to find peers locally.
 .PP
 The mechanism used to find peers locally is through multicast.  It is
@@ -203,16 +203,16 @@ response to a multicast query through Neighbor Solicitation is a unicast
 response through Neighbor Advertisement, in both cases encapsulated in
 UDP and IPv4.
 .PP
-The default setting \fB\-\-radius 1\fR works only on locally attached
+The default setting \fB\-\-ttl 1\fR works only on locally attached
 subnets.  This is generally safe, as this network is normally unfiltered.
 In places where filtering is applied within a subnet, the administrative
 staff should be prepared to stop confusion of network nodes; in case of
-6bed4, this means setting \fB\-\-radius 0\fR to avoid relying on an open
+6bed4, this means setting \fB\-\-ttl 0\fR to avoid relying on an open
 locally attached subnet.  This setting implies that the daemon does not
 listen for incoming queries over multicast.  The standards specify that
 multicast support is optional, so this does not break any standards.
 .PP
-Settings of \fB\-\-radius 2\fR and beyond are more dangerous; it could
+Settings of \fB\-\-ttl 2\fR and beyond are more dangerous; it could
 lead to asymmetric routes if not properly configured on a network.  The
 problem of asymmetric routes being that one half might go through a
 hole in NAT, which closes when traffic does not flow through bidirectionally.

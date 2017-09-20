@@ -63,9 +63,9 @@ typedef enum {
 
 /*
  * The HAVE_SETUP_TUNNEL variable is used to determine whether absense of
- * the -t option leads to an error, or to an attempt to setup the tunnel.
+ * the -d option leads to an error, or to an attempt to setup the tunnel.
  * The setup_tunnel() function used for that is defined per platform, such
- * as for LINUX.  Remember to maintain the manpage's optionality for -t.
+ * as for LINUX.  Remember to maintain the manpage's optionality for -d.
  */
 #undef HAVE_SETUP_TUNNEL
 
@@ -1521,11 +1521,11 @@ char *short_opt = "s:t:dl:p:r:k:feh";
 
 struct option long_opt [] = {
 	{ "v4server", 1, NULL, 's' },
-	{ "tundev", 1, NULL, 't' },
-	{ "default-route", 0, NULL, 'd' },
+	{ "tundev", 1, NULL, 'd' },
+	{ "default-route", 0, NULL, 'r' },
 	{ "listen", 1, NULL, 'l' },
 	{ "port", 1, NULL, 'p' },
-	{ "radius-multicast", 1, NULL, 'r' },
+	{ "ttl", 1, NULL, 't' },
 	{ "foreground", 0, NULL, 'f' },
 	{ "fork-not", 0, NULL, 'f' },
 	{ "keepalive", 1, NULL, 'k' },
@@ -1575,10 +1575,10 @@ int process_args (int argc, char *argv []) {
 				break;
 			}
 			break;
-		case 't':
+		case 'd':
 			if (v6sox != -1) {
 				ok = 0;
-				fprintf (stderr, "%s: Multiple -t arguments are not permitted\n", program);
+				fprintf (stderr, "%s: Multiple -d arguments are not permitted\n", program);
 				break;
 			}
 			v6sox = open (optarg, O_RDWR);
@@ -1588,7 +1588,7 @@ int process_args (int argc, char *argv []) {
 				break;
 			}
 			break;
-		case 'd':
+		case 'r':
 			if (default_route) {
 				fprintf (stderr, "%s: You can only request default route setup once\n", program);
 				exit (1);
@@ -1627,9 +1627,9 @@ int process_args (int argc, char *argv []) {
 			}
 			log_to_stderr = true;
 			break;
-		case 'r':
+		case 't':
 			if (v4ttl_mcast != -1) {
-				fprintf (stderr, "%s: You can set the radius for multicast once\n", program);
+				fprintf (stderr, "%s: You can set the ttl for multicast once\n", program);
 				exit (1);
 			}
 			char *zero;
@@ -1676,9 +1676,9 @@ int process_args (int argc, char *argv []) {
 	}
 	if (help) {
 #ifdef HAVE_SETUP_TUNNEL
-		fprintf (stderr, "Usage: %s [-d] [-t /dev/tunX]\n       %s -h\n", program, program);
+		fprintf (stderr, "Usage: %s [-r] [-d /dev/tunX]\n       %s -h\n", program, program);
 #else
-		fprintf (stderr, "Usage: %s [-d] -t /dev/tunX\n       %s -h\n", program, program);
+		fprintf (stderr, "Usage: %s [-r] -d /dev/tunX\n       %s -h\n", program, program);
 #endif
 		return 0;
 	}
@@ -1693,7 +1693,7 @@ int process_args (int argc, char *argv []) {
 #ifdef HAVE_SETUP_TUNNEL
 	if (v6sox == -1) {
 		if (geteuid () != 0) {
-			fprintf (stderr, "%s: You should be root, or use -t to specify an accessible tunnel device\n", program);
+			fprintf (stderr, "%s: You should be root, or use -d to specify an accessible tunnel device\n", program);
 			return false;
 		} else {
 			return setup_tunnel ();
@@ -1701,7 +1701,7 @@ int process_args (int argc, char *argv []) {
 	}
 #else /* ! HAVE_SETUP_TUNNEL */
 	if (v6sox == -1) {
-		fprintf (stderr, "%s: You must specify a tunnel device with -t that is accessible to you\n", program);
+		fprintf (stderr, "%s: You must specify a tunnel device with -d that is accessible to you\n", program);
 		return 0;
 	}
 #endif /* HAVE_SETUP_TUNNEL */

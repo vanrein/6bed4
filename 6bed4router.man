@@ -15,19 +15,24 @@
 6bed4router \- server-side daemon for 6bed4 service
 .SH SYNOPSYS
 .B 6bed4router
-[\fB\-t\fR \fI/dev/tunX\fR] \fB\-l\fR \fIv4addr\fR \fB\-L\fR \fIv6prefix/64\fR
+[\fB\-d\fR \fI/dev/tunX\fR] \fB\-l\fR \fIv4addr\fR \fB\-L\fR \fIv6prefix/64\fR [\fB\-m\fR/\fBs\fR/\fBt\fR/\fBu\fR \fI...\fR]
 .PP
 .B 6bed4router
 [\fB\-h\fR]
 .SH DESCRIPTION
 .PP
 Through a \fB6bed4router\fR daemon, it is possible to make a small range of IPv6
-addresses available to IPv4-only users.  This means that even an IPv4-only
+addresses available to a potentially large number of IPv4-only users.  This means that even an IPv4-only
 network can host IPv6-only applications, as long as they can fall back on
 a tunnel based on this profile.
 .PP
-These tunnels are primarily intended for embedded devices, to assist them
-in instant changeover from being IPv4-only to being IPv6-only.  Given the
+Use the \fB6bed4router\fR on nodes that support \fB6bed4peer\fR clients
+anywhere; instead, use the \fB6bed4node\fR on nodes that want to provide
+native IPv6 on a local network.
+.PP
+These tunnels are intended for mobile and embedded devices, to assist them
+in instant changeover from being IPv4-only to eventually being IPv6-only.
+Given the
 restricted resources in embedded applications, this is likely to improve
 the speed of transitioning to IPv6.  To avoid cluttered access, these
 tunnels should be reserved for resource-hampered devices.  For routers,
@@ -71,7 +76,7 @@ but not without performing the SECURITY CHECKS desribed below
 on what is tossed at it.
 .SH OPTIONS
 .TP
-\fB\-t\fR \fI/dev/tunX\fR
+\fB\-d\fR \fI/dev/tunX\fR
 .TP
 \fB\-\-tundev\fR \fI/dev/tunX\fR
 Instead of creating a tunnel for the duration that \fB6bed4router\fR runs,
@@ -94,10 +99,39 @@ forward incoming IPv6 messages to IPv4-based UDP tunnel endpoints.
 See ADDRESS FORMAT below for an explanation of the lower half of
 the IPv6 addresses.  Required.
 .IP
-If no \fB\-t\fR option is given, a tunnel will be created for the time that
+If no \fB\-d\fR option is given, a tunnel will be created for the time that
 \fB6bed4router\fR is running, and the \fIv6prefix/64\fR is used as a router address
 on that interface.  Routing table entries will not be setup by \fB6bed4router\fR,
 nor will the general ablity to forward IPv6 traffic.
+.TP
+\fB\-m\fR \fIv6addr\fR
+.TP
+\fB\-\-masqhost\fR \fIv6addr\fR
+Use the given IPv6 address as the target for masqueraded operation.  This
+means that any ports setup with \fB\-\-sctp\fR, \fB\-\-tcp\fR or \fB\-\-udp\fR
+are forwarded
+to this address when addressed on the client's idea of the 6bed4 router
+address.  Note that the router only uses a few ICMPv6 messages, so the use
+of these additional ports can benefit various applications, ranging from
+authentication services to honeypots.
+.TP
+\fB\-s\fR \fIport\fR[\fB:\fIport\fR]
+.TP
+\fB\-t\fR \fIport\fR[\fB:\fIport\fR]
+.TP
+\fB\-u\fR \fIport\fR[\fB:\fIport\fR]
+.TP
+\fB\-sctp\fR \fIport\fR[\fB:\fIport\fR]
+.TP
+\fB\-tcp\fR \fIport\fR[\fB:\fIport\fR]
+.TP
+\fB\-udp\fR \fIport\fR[\fB:\fIport\fR]
+Apply the masquerading port or port range for SCTP, TCP or UDP to the
+masquerading host set by the last preceding \fB\-\-masqhost\fR option,
+or use \fB::1\fR
+if none was set yet.  Ports that have been previously bound will not make it,
+so it is possible to first relay a port with \fB\-t 22\fR to a service and
+then pass the rest to a honeypot with \fB\-t 1:65535\fR.
 .TP
 \fB\-h\fR
 .TP
