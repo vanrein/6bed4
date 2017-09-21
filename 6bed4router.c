@@ -109,12 +109,14 @@ struct {
 		} idata;
 		struct {
 			struct ip6_hdr v6hdr;
-			struct icmp6_hdr v6icmphdr;
+			union {
+				struct icmp6_hdr v6icmphdr;
 #ifndef BE_SO_LAME_TO_SUPPRESS_SCTP
-			struct sctphdr v6sctphdr;
+				struct sctphdr v6sctphdr;
 #endif
-			struct tcphdr  v6tcphdr ;
-			struct udphdr  v6udphdr ;
+				struct tcphdr  v6tcphdr ;
+				struct udphdr  v6udphdr ;
+			} adata;
 		} ndata;
 	} udata;
 } v4data6;
@@ -129,22 +131,22 @@ struct {
 #define v4v6nexthdr	( v4data6.udata.ndata.v6hdr.ip6_nxt)
 #define v4v6hoplimit	( v4data6.udata.ndata.v6hdr.ip6_hops)
 
-#define v4icmp6		(&v4data6.udata.ndata.v6icmphdr)
-#define v4v6icmpdata	( v4data6.udata.ndata.v6icmphdr.icmp6_data8)
-#define v4v6icmptype	( v4data6.udata.ndata.v6icmphdr.icmp6_type)
-#define v4v6icmpcode	( v4data6.udata.ndata.v6icmphdr.icmp6_code)
-#define v4v6icmpcksum	( v4data6.udata.ndata.v6icmphdr.icmp6_cksum)
+#define v4icmp6		(&v4data6.udata.ndata.adata.v6icmphdr)
+#define v4v6icmpdata	( v4data6.udata.ndata.adata.v6icmphdr.icmp6_data8)
+#define v4v6icmptype	( v4data6.udata.ndata.adata.v6icmphdr.icmp6_type)
+#define v4v6icmpcode	( v4data6.udata.ndata.adata.v6icmphdr.icmp6_code)
+#define v4v6icmpcksum	( v4data6.udata.ndata.adata.v6icmphdr.icmp6_cksum)
 
-#define v4v6sctpsrcport	( v4data6.udata.ndata.v6sctphdr.source)
-#define v4v6sctpdstport	( v4data6.udata.ndata.v6sctphdr.dest)
+#define v4v6sctpsrcport	( v4data6.udata.ndata.adata.v6sctphdr.source)
+#define v4v6sctpdstport	( v4data6.udata.ndata.adata.v6sctphdr.dest)
 
-#define v4v6tcpsrcport	( v4data6.udata.ndata.v6tcphdr.source)
-#define v4v6tcpdstport	( v4data6.udata.ndata.v6tcphdr.dest)
+#define v4v6tcpsrcport	( v4data6.udata.ndata.adata.v6tcphdr.source)
+#define v4v6tcpdstport	( v4data6.udata.ndata.adata.v6tcphdr.dest)
 
-#define v4v6udpsrcport	( v4data6.udata.ndata.v6udphdr.source)
-#define v4v6udpdstport	( v4data6.udata.ndata.v6udphdr.dest)
+#define v4v6udpsrcport	( v4data6.udata.ndata.adata.v6udphdr.source)
+#define v4v6udpdstport	( v4data6.udata.ndata.adata.v6udphdr.dest)
 
-#define v4ngbsoltarget	(&v4data6.udata.ndata.v6icmphdr.icmp6_data8 [4])
+#define v4ngbsoltarget	(&v4data6.udata.ndata.adata.v6icmphdr.icmp6_data8 [4])
 
 
 struct {
@@ -422,6 +424,17 @@ static inline bool is_fc64 (struct in6_addr *ip6) {
 	return ip6->s6_addr16 [0] == htons (0xfc64);
 }
 
+/* Test if the src and destination share the same /114 and the destination
+ * fills up the rest with zero bits; in other words, test that this is a
+ * package targeted from a 6bed4peer node to its 6bed4router.  This is used
+ * to distinguish special ICMPv6 messages, as well as masquerading targets.
+ */
+static inline bool is_mine (struct in6_addr *src6, struct in6_addr *dst6) {
+	return ((dst6->s6_addr [15] == 0x00)
+		&& ((dst6->s6_addr [14] & 0x3f) == 0x00)
+		&& (memcmp (dst6->s6_addr, src6->s6_addr, 14) == 0));
+}
+
 
 /*
  * Validate the originator's IPv6 address.  It should match the
@@ -581,6 +594,59 @@ void handle_4to6_nd (ssize_t v4ngbcmdlen) {
 }
 
 
+/*
+ * Forward a message to the masquerading target, or drop it.  This is done
+ * with non-6bed4 packets that are sent from a 6bed4peer node to its
+ * 6bed4router address; see is_mine() for the definition.  The general idea
+ * is that the address that is to be masqueraded can later be reconstructed
+ * from the 6bed4peer's address.
+ */
+void handle_4to6_masquerading (ssize_t v4datalen) {
+	fprintf (stderr, "Traffic to 6bed4router may be fit for masquerading\n");
+	uint16_t *portpairs = NULL;
+	uint16_t numpairs = 0;
+	uint16_t port;
+	switch (v4v6nexthdr) {
+#ifndef BE_SO_LAME_TO_SUPPRESS_SCTP
+	case IPPROTO_SCTP:
+		portpairs = masqportpairs [0];	// 's'
+		numpairs  = num_masqportpairs [0];
+		port = ntohs (v4v6sctpdstport);
+		break;
+#endif
+	case IPPROTO_TCP:
+		portpairs = masqportpairs [1];	// 't'
+		numpairs  = num_masqportpairs [1];
+		port = ntohs (v4v6tcpdstport);
+		break;
+	case IPPROTO_UDP:
+		portpairs = masqportpairs [2];	// 'u'
+		numpairs  = num_masqportpairs [2];
+		port = ntohs (v4v6udpdstport);
+		break;
+	default:
+		break;
+	}
+	fprintf (stderr, "DEBUG: Looking for masquerading of port %d in %d entries\n", port, numpairs);
+	while (numpairs-- > 0) {
+		if ((port >= portpairs [0]) && (port <= portpairs [1])) {
+			//
+			// Replace masqueraded address by 6bed4router's
+			fprintf (stderr, "DEBUG: Passing traffic to masquerading address number %d\n", portpairs [2]);
+			memcpy (v4dst6, masqhost [portpairs [2]], 16);
+			//
+			// Forward immediately, and return from this function
+printf ("Writing Masqueraded IPv6, result = %zd\n",
+			write (v6sox, &v4data6, sizeof (struct tun_pi) + v4datalen));
+			return;
+		}
+		portpairs += 3;
+	}
+	//
+	// Silently skip the offered packet
+}
+
+
 /* 
  * Forward a message received over the 6bed4 Network over IPv6.
  * Note that existing checksums will work well, as only the
@@ -588,49 +654,6 @@ void handle_4to6_nd (ssize_t v4ngbcmdlen) {
  * checksum calculations.
  */
 void handle_4to6_plain_unicast (ssize_t v4datalen) {
-	//
-	// Masquerade the 6bed4router when addressing a configured port (range)
-	// but only when the destination address is the client's 6bed4router
-	if ((v4dst6->s6_addr [15] == 0x00)
-			&& (v4dst6->s6_addr [14] & 0x3f == 0x00)
-			&& (memcmp (v4dst6, v4src6, 14) == 0)) {
-		uint16_t *portpairs = NULL;
-		uint16_t numpairs = 0;
-		uint16_t port;
-		switch (v4v6nexthdr) {
-#ifndef BE_SO_LAME_TO_SUPPRESS_SCTP
-		case IPPROTO_SCTP:
-			portpairs = masqportpairs [0];	// 's'
-			numpairs  = num_masqportpairs [0];
-			port = ntohs (v4v6srcport);
-			break;
-#endif
-		case IPPROTO_TCP:
-			portpairs = masqportpairs [1];	// 't'
-			numpairs  = num_masqportpairs [1];
-			port = v4v6tcpsrcport;
-			break;
-		case IPPROTO_UDP:
-			portpairs = masqportpairs [2];	// 'u'
-			numpairs  = num_masqportpairs [2];
-			port = v4v6udpsrcport;
-			break;
-		default:
-			break;
-		}
-		while (numpairs-- > 0) {
-			if ((port >= portpairs [0]) && (port <= portpairs [1])) {
-				//
-				// Replace masqueraded address by 6bed4router's
-				memcpy (v4dst6, masqhost [portpairs [2]], 16);
-				//
-				// Stop further attempts to masquerade
-			}
-			portpairs += 2;
-		}
-	}
-	//
-	// Relay the message to an IPv6 recipient on the native IPv6 side
 printf ("Writing IPv6, result = %zd\n",
 	write (v6sox, &v4data6, sizeof (struct tun_pi) + v4datalen));
 }
@@ -698,6 +721,8 @@ void handle_4to6 (void) {
 			return;
 		}
 		handle_4to6_nd (buflen);
+	} else if (is_mine (v4src6, v4dst6)) {
+		handle_4to6_masquerading (buflen);
 	} else if ((v4dst6->s6_addr [0] != 0xff) && !(v4dst6->s6_addr [8] & 0x01)) {
 		//
 		// Plain Unicast
@@ -979,8 +1004,6 @@ int process_args (int argc, char *argv []) {
 				break;
 			}
 			num_masqhost++;
-			ok = 0;	//TODO:IMPLEMENT//
-			help = 1;
 			break;
 		// case 'f':
 		// case 'F':
