@@ -50,10 +50,6 @@
 #include <netinet/icmp6.h>
 #include <arpa/inet.h>
 
-#ifndef BE_SO_LAME_TO_SUPPRESS_SCTP
-#include <linux/sctp.h>
-#endif
-
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <linux/if_ether.h>
@@ -77,6 +73,13 @@
 
 
 /* Global variables */
+
+/* SCTP structures are far from standardised, so we define our own header */
+struct my_sctphdr {
+	uint16_t source, dest;
+	uint32_t vtag;
+	uint32_t checksum;
+};
 
 char *program;
 
@@ -111,12 +114,14 @@ struct {
 			struct ip6_hdr v6hdr;
 			union {
 				struct icmp6_hdr v6icmphdr;
-#ifndef BE_SO_LAME_TO_SUPPRESS_SCTP
-				struct sctphdr v6sctphdr;
-#endif
+				struct my_sctphdr v6sctphdr;
 				struct tcphdr  v6tcphdr ;
 				struct udphdr  v6udphdr ;
 			} adata;
+			struct icmp6_hdr v6icmphdr;
+			struct my_sctphdr v6sctphdr;
+			struct tcphdr  v6tcphdr ;
+			struct udphdr  v6udphdr ;
 		} ndata;
 	} udata;
 } v4data6;
@@ -607,13 +612,11 @@ void handle_4to6_masquerading (ssize_t v4datalen) {
 	uint16_t numpairs = 0;
 	uint16_t port;
 	switch (v4v6nexthdr) {
-#ifndef BE_SO_LAME_TO_SUPPRESS_SCTP
 	case IPPROTO_SCTP:
 		portpairs = masqportpairs [0];	// 's'
 		numpairs  = num_masqportpairs [0];
 		port = ntohs (v4v6sctpdstport);
 		break;
-#endif
 	case IPPROTO_TCP:
 		portpairs = masqportpairs [1];	// 't'
 		numpairs  = num_masqportpairs [1];
