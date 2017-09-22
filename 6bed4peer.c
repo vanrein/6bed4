@@ -332,7 +332,7 @@ bool setup_tunnel_address (void) {
 	}
 	snprintf (cmd, 512, "/sbin/ip link set %s address %02x:%02x:%02x:%02x:%02x:%02x", ifreq.ifr_name, v6lladdr [0], v6lladdr [1], v6lladdr [2], v6lladdr [3], v6lladdr [4], v6lladdr [5]);
 	if (ok && system (cmd) != 0) {
-	syslog (LOG_CRIT, "Failed to set MAC address for link to %02x:%02x:%02x:%02x:%02x%s\n", ifreq.ifr_name, v6lladdr [0], v6lladdr [1], v6lladdr [2], v6lladdr [3], v6lladdr [4], v6lladdr [5]);
+	syslog (LOG_CRIT, "Failed to set MAC address for link %s to %02x:%02x:%02x:%02x:%02x%s\n", ifreq.ifr_name, v6lladdr [0], v6lladdr [1], v6lladdr [2], v6lladdr [3], v6lladdr [4], v6lladdr [5]);
 		ok = false;
 	}
 	snprintf (cmd, 512, "/sbin/ip link set %s up mtu %d", ifreq.ifr_name, MTU);
