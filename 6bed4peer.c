@@ -901,25 +901,12 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 			memcpy (v6listen.s6_addr + 0, destprefix, 16);
 			v6listen.s6_addr [14] &= 0xc0;
 			v6listen.s6_addr [15]  = 0x01;	// choose client 1
-			int prefixBits = PREFIX_SIZE;
-			int i;
-			for (i = 0; prefixBits >= 8; i++) {
-				v6listen_linklocal_complete [i] = v6listen_linklocal [i];
-				prefixBits -= 8;
-			}
-			if (prefixBits > 0) {
-				int mask = (1 << (8 - prefixBits)) - 1;
-				v6listen_linklocal_complete [i] = (v6listen_linklocal [i] & ~mask) | (v6listen.s6_addr [i] & mask);
-				i++;
-			}
-			while (i < 16) {
-				v6listen_linklocal_complete [i] = v6listen.s6_addr [i];
-				i++;
-			}
-			memcpy (v6lladdr, v6listen_linklocal_complete+8, 6);
+			memcpy (v6listen_linklocal_complete, v6listen_linklocal, 8);
+			memcpy (v6listen_linklocal_complete, v6listen.s6_addr + 8, 8);
+			memcpy (v6lladdr, destprefix + 8, 6);
 			//TODO// Is v6lladdr useful?  Should it include lanip?
 			v6lladdr [0] &= 0xfc;
-			v6lladdr [0] |= (v6listen_linklocal_complete [14] >> 6);
+			v6lladdr [0] |= (destprefix [14] >> 6);
 			inet_ntop (AF_INET6,
 				&v6listen,
 				v6prefix,
