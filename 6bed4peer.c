@@ -330,13 +330,11 @@ bool setup_tunnel_address (void) {
 	if (ok && system (cmd) != 0) {
 		ok = 0;
 	}
-#ifdef TODO_NO_LLADDR_FOR_NOW
 	snprintf (cmd, 512, "/sbin/ip link set %s address %02x:%02x:%02x:%02x:%02x:%02x", ifreq.ifr_name, v6lladdr [0], v6lladdr [1], v6lladdr [2], v6lladdr [3], v6lladdr [4], v6lladdr [5]);
 	if (ok && system (cmd) != 0) {
-syslog (LOG_CRIT, "Bad news!\n");
+	syslog (LOG_CRIT, "Failed to set MAC address for link to %02x:%02x:%02x:%02x:%02x%s\n", ifreq.ifr_name, v6lladdr [0], v6lladdr [1], v6lladdr [2], v6lladdr [3], v6lladdr [4], v6lladdr [5]);
 		ok = false;
 	}
-#endif
 	snprintf (cmd, 512, "/sbin/ip link set %s up mtu %d", ifreq.ifr_name, MTU);
 	if (ok && system (cmd) != 0) {
 		ok = false;
@@ -911,19 +909,14 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 			}
 			if (prefixBits > 0) {
 				int mask = (1 << (8 - prefixBits)) - 1;
-				v6listen_linklocal_complete [i] = v6lladdr [i] = (v6listen_linklocal [i] & ~mask) | (v6listen.s6_addr [i] & mask);
+				v6listen_linklocal_complete [i] = (v6listen_linklocal [i] & ~mask) | (v6listen.s6_addr [i] & mask);
 				i++;
 			}
 			while (i < 16) {
-				v6listen_linklocal_complete [i] = v6lladdr [i] = v6listen.s6_addr [i];
+				v6listen_linklocal_complete [i] = v6listen.s6_addr [i];
 				i++;
 			}
-
-//			memcpy (v6listen_linklocal_complete+0,
-//					v6listen_linklocal, 8);
-//			memcpy (v6listen_linklocal_complete+8,
-//					v6listen.s6_addr+8, 8);
-//			memcpy (v6lladdr, v6listen_linklocal_complete+8, 8);
+			memcpy (v6lladdr, v6listen_linklocal_complete+8, 6);
 			//TODO// Is v6lladdr useful?  Should it include lanip?
 			v6lladdr [0] &= 0xfc;
 			v6lladdr [0] |= (v6listen_linklocal_complete [14] >> 6);
