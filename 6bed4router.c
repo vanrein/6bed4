@@ -223,6 +223,10 @@ uint8_t masqhost [MAXNUM_MASQHOST][16];
 uint16_t num_masqportpairs [3] = { 0, 0, 0 };
 uint16_t masqportpairs [3][3*MAXNUM_PORTPAIRS];
 
+// same for ICMPv6
+uint16_t icmp_num_portpairs = 0;
+uint16_t icmp_portpairs [3] = { 1, 1, 0 };
+
 
 
 /*
@@ -675,9 +679,14 @@ void handle_4to6_masquerading (ssize_t v4datalen) {
 		port = ntohs (v4v6udpdstport);
 		csum_field = &v4v6udpcksum;
 		break;
-	//TODO// ICMPv6
-	default:
+	case IPPROTO_ICMPV6:
+		portpairs = icmp_portpairs;
+		numpairs = icmp_num_portpairs;
+		port = icmp_portpairs [0];
+		csum_field = &v4v6icmpcksum;
 		break;
+	default:
+		return;
 	}
 	fprintf (stderr, "DEBUG: Looking for masquerading of port %d in %d entries\n", port, numpairs);
 	while (numpairs-- > 0) {
@@ -1026,6 +1035,7 @@ int process_args (int argc, char *argv []) {
 		case 's':
 		case 't':
 		case 'u':
+		case 'i':
 			// Masqueraded port (range) for SCTP, TCP, UDP
 			//TODO// Should we support ICMPv6 as well? [honeypots]
 			if (num_masqhost == 0) {
@@ -1034,7 +1044,15 @@ int process_args (int argc, char *argv []) {
 				num_masqhost = 1;
 			}
 			// Temporary variables in local scope
-			{
+			if (opt == 'i') {
+				if (icmp_num_portpairs > 0) {
+					fprintf (stderr, "%s: Only one ICMP masquerading setting is possible\n", program);
+					ok = 0;
+					break;
+				}
+				icmp_portpairs [2] = num_masqhost - 1;
+				icmp_num_portpairs++;
+			} else {
 				unsigned long fromport, toport;
 				uint16_t *portpairs;
 				errno = 0;
