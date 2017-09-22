@@ -54,6 +54,7 @@
 
 
 #define MTU 1280
+#define PREFIX_SIZE 114
 
 typedef enum {
 	METRIC_LOW,
@@ -335,7 +336,7 @@ syslog (LOG_CRIT, "Bad news!\n");
 	if (ok && system (cmd) != 0) {
 		ok = false;
 	}
-	snprintf (cmd, 512, "/sbin/ip -6 addr add %s/64 dev %s", v6prefix, ifreq.ifr_name);
+	snprintf (cmd, 512, "/sbin/ip -6 addr add %s/114 dev %s", v6prefix, ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
 		ok = false;
 	}
@@ -885,7 +886,7 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 				return;   /* out of packet length */
 			} else if (v4v6icmpdata [rdofs + 3] & 0xc0 != 0xc0) {
 				/* no on-link autoconfig prefix */
-			} else if (v4v6icmpdata [rdofs + 2] != 114) {
+			} else if (v4v6icmpdata [rdofs + 2] != PREFIX_SIZE) {
 				/* not a /114 prefix, so no 6bed4 offer */
 				return;
 			} else {
@@ -897,11 +898,27 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 			memcpy (v6listen.s6_addr + 0, destprefix, 16);
 			v6listen.s6_addr [14] &= 0xc0;
 			v6listen.s6_addr [15]  = 0x01;	// choose client 1
-			memcpy (v6listen_linklocal_complete+0,
-					v6listen_linklocal, 8);
-			memcpy (v6listen_linklocal_complete+8,
-					v6listen.s6_addr+8, 8);
-			memcpy (v6lladdr, v6listen_linklocal_complete+8, 8);
+			int prefixBits = PREFIX_SIZE;
+			int i;
+			for (i = 0; prefixBits >= 8; i++) {
+				v6listen_linklocal_complete [i] = v6listen_linklocal [i];
+				prefixBits -= 8;
+			}
+			if (prefixBits > 0) {
+				int mask = (1 << (8 - prefixBits)) - 1;
+				v6listen_linklocal_complete [i] = v6lladdr [i] = (v6listen_linklocal [i] & ~mask) | (v6listen.s6_addr [i] & mask);
+				i++;
+			}
+			while (i < 16) {
+				v6listen_linklocal_complete [i] = v6lladdr [i] = v6listen.s6_addr [i];
+				i++;
+			}
+
+//			memcpy (v6listen_linklocal_complete+0,
+//					v6listen_linklocal, 8);
+//			memcpy (v6listen_linklocal_complete+8,
+//					v6listen.s6_addr+8, 8);
+//			memcpy (v6lladdr, v6listen_linklocal_complete+8, 8);
 			//TODO// Is v6lladdr useful?  Should it include lanip?
 			v6lladdr [0] &= 0xfc;
 			v6lladdr [0] |= (v6listen_linklocal_complete [14] >> 6);
