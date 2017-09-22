@@ -266,6 +266,10 @@ bool multicast = true;
  *
  */
 
+#ifndef INTERFACE_NAME_6BED4
+#define INTERFACE_NAME_6BED4 "6bed4"
+#endif
+
 #ifdef LINUX
 #define HAVE_SETUP_TUNNEL
 static struct ifreq ifreq;
@@ -289,7 +293,7 @@ bool setup_tunnel (void) {
 	}
 	if (!have_tunnel) {
 		memset (&ifreq, 0, sizeof (ifreq));
-		strncpy (ifreq.ifr_name, "6bed4", IFNAMSIZ);
+		strncpy (ifreq.ifr_name, INTERFACE_NAME_6BED4, IFNAMSIZ);
 		ifreq.ifr_flags = IFF_TAP | IFF_NO_PI;
 		if (ok && (ioctl (v6sox, TUNSETIFF, (void *) &ifreq) == -1)) {
 			syslog (LOG_CRIT, "Failed to set interface name: %s\n", strerror (errno));
@@ -317,6 +321,7 @@ syslog (LOG_DEBUG, "Found Interface Index %d for name %s\n", ifreq.ifr_ifindex, 
 	}
 	return ok;
 }
+
 bool setup_tunnel_address (void) {
 	bool ok = have_tunnel;
 	char cmd [512+1];
@@ -1534,7 +1539,7 @@ syslog (LOG_DEBUG, "WOW: Got multicast input\n");
 
 /* Option descriptive data structures */
 
-char *short_opt = "s:t:dl:p:r:k:feh";
+char *short_opt = "s:t:d:l:p:rk:feh";
 
 struct option long_opt [] = {
 	{ "v4server", 1, NULL, 's' },
