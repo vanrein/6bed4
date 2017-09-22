@@ -78,7 +78,7 @@
 struct my_sctphdr {
 	uint16_t source, dest;
 	uint32_t vtag;
-	uint32_t checksum;
+	uint32_t cksum;
 };
 
 char *program;
@@ -113,15 +113,11 @@ struct {
 		struct {
 			struct ip6_hdr v6hdr;
 			union {
-				struct icmp6_hdr v6icmphdr;
+				struct icmp6_hdr  v6icmphdr;
 				struct my_sctphdr v6sctphdr;
-				struct tcphdr  v6tcphdr ;
-				struct udphdr  v6udphdr ;
+				struct tcphdr     v6tcphdr ;
+				struct udphdr     v6udphdr ;
 			} adata;
-			struct icmp6_hdr v6icmphdr;
-			struct my_sctphdr v6sctphdr;
-			struct tcphdr  v6tcphdr ;
-			struct udphdr  v6udphdr ;
 		} ndata;
 	} udata;
 } v4data6;
@@ -132,11 +128,11 @@ struct {
 #define v4src6		(&v4data6.udata.idata.v6hdr.ip6_src)
 #define v4dst6		(&v4data6.udata.idata.v6hdr.ip6_dst)
 
+#define v4v6payload	((uint16_t *) &v4data6.udata.ndata.adata)
 #define v4v6plen	( v4data6.udata.ndata.v6hdr.ip6_plen)
 #define v4v6nexthdr	( v4data6.udata.ndata.v6hdr.ip6_nxt)
 #define v4v6hoplimit	( v4data6.udata.ndata.v6hdr.ip6_hops)
 
-#define v4icmp6		(&v4data6.udata.ndata.adata.v6icmphdr)
 #define v4v6icmpdata	( v4data6.udata.ndata.adata.v6icmphdr.icmp6_data8)
 #define v4v6icmptype	( v4data6.udata.ndata.adata.v6icmphdr.icmp6_type)
 #define v4v6icmpcode	( v4data6.udata.ndata.adata.v6icmphdr.icmp6_code)
@@ -144,12 +140,15 @@ struct {
 
 #define v4v6sctpsrcport	( v4data6.udata.ndata.adata.v6sctphdr.source)
 #define v4v6sctpdstport	( v4data6.udata.ndata.adata.v6sctphdr.dest)
+#define v4v6sctpcksum	( v4data6.udata.ndata.adata.v6sctphdr.cksum)
 
 #define v4v6tcpsrcport	( v4data6.udata.ndata.adata.v6tcphdr.source)
 #define v4v6tcpdstport	( v4data6.udata.ndata.adata.v6tcphdr.dest)
+#define v4v6tcpcksum	( v4data6.udata.ndata.adata.v6tcphdr.check)
 
 #define v4v6udpsrcport	( v4data6.udata.ndata.adata.v6udphdr.source)
 #define v4v6udpdstport	( v4data6.udata.ndata.adata.v6udphdr.dest)
+#define v4v6udpcksum	( v4data6.udata.ndata.adata.v6udphdr.check)
 
 #define v4ngbsoltarget	(&v4data6.udata.ndata.adata.v6icmphdr.icmp6_data8 [4])
 
@@ -158,21 +157,35 @@ struct {
 	struct tun_pi tun;
 	union {
 		uint8_t data [MTU];
-		struct ip6_hdr v6hdr;
-		struct icmp6_hdr v6icmp;
+		struct {
+			struct ip6_hdr v6hdr;
+			union {
+				struct icmp6_hdr  v6icmphdr;
+				struct my_sctphdr v6sctphdr;
+				struct tcphdr     v6tcphdr ;
+				struct udphdr     v6udphdr ;
+			} adata;
+		} ndata;
 	} udata;
 	uint8_t zero;
 } v6data6;
 
 #define v6tuncmd	( v6data6.tun)
 #define v6data		( v6data6.udata.data)
-#define v6hdr6		(&v6data6.udata.v6hdr)
-#define v6src6		(&v6data6.udata.v6hdr.ip6_src)
-#define v6dst6		(&v6data6.udata.v6hdr.ip6_dst)
-#define v6hoplimit	( v6data6.udata.v6hdr.ip6_hops)
+#define v6hdr6		(&v6data6.udata.ndata.v6hdr)
+#define v6src6		(&v6data6.udata.ndata.v6hdr.ip6_src)
+#define v6dst6		(&v6data6.udata.ndata.v6hdr.ip6_dst)
+#define v6hoplimit	( v6data6.udata.ndata.v6hdr.ip6_hops)
+#define v6nexthdr	( v6data6.udata.ndata.v6hdr.ip6_nxt)
 
-#define v6nexthdr	( v6data6.udata.v6hdr.ip6_nxt)
-#define v6icmptype	( v6data6.udata.v6icmp.icmp6_type)
+#define v6icmptype	( v6data6.udata.ndata.adata.v6icmphdr.icmp6_type)
+#define v6icmpcksum	( v6data6.udata.ndata.adata.v6icmphdr.icmp6_cksum)
+
+#define v6sctpcksum	( v6data6.udata.ndata.adata.v6sctphdr.cksum)
+
+#define v6tcpcksum	( v6data6.udata.ndata.adata.v6tcphdr.check)
+
+#define v6udpcksum	( v6data6.udata.ndata.adata.v6udphdr.check)
 
 
 uint8_t router_linklocal_address [] = {
@@ -292,11 +305,14 @@ void addr_6bed4 (struct in6_addr *dst_ip6, uint16_t lanip) {
 
 /* Calculate the ICMPv6 checksum field
  */
-uint16_t icmp6_checksum (size_t payloadlen) {
-	uint16_t plenword = htons (payloadlen);
+uint16_t icmp6_checksum (struct in6_addr *src6, struct in6_addr *dst6,
+				uint16_t *payload, size_t payloadlen) {
+	uint16_t plenword = htons (payloadlen);	// our ICMPv6 is small
 	uint16_t nxthword = htons (IPPROTO_ICMPV6);
-	uint16_t *area [] = { (uint16_t *) v4src6, (uint16_t *) v4dst6, &plenword, &nxthword, (uint16_t *) v4icmp6, (uint16_t *) v4v6icmpdata };
-	uint8_t areawords [] = { 8, 8, 1, 1, 1, payloadlen/2 - 2 };
+	uint16_t *area [] = { src6->s6_addr16, dst6->s6_addr16,
+				&plenword, &nxthword,
+				payload, &payload [2] };
+	uint8_t areawords [] = { 8, 8, 1, 1, 1, (payloadlen >> 1) - 2 };
 	uint32_t csum = 0;
 	u_int8_t i, j;
 	for (i=0; i < 6; i++) {
@@ -308,6 +324,29 @@ uint16_t icmp6_checksum (size_t payloadlen) {
 	csum = (csum & 0xffff) + (csum >> 16);
 	csum = htons (~csum);
 	return csum;
+}
+
+
+/* Mangle a packet by replacing an IPv6 address, correcting the checksum.
+ * In all of ICMPv6, UDPv6, TCPv6, SCTPv6, the checksumming is a 1's cpl
+ * of a sum of 16-bit words; the position of the words don't matter and
+ * we can subtract the old address' words and add the new address' words.
+ * Or, as a result of the one's complement, the opposite.  There is some
+ * inclusion of the top half of a 32-bit sum, but that is also neutral.
+ */
+void masquerade_address (struct in6_addr *var,
+			const struct in6_addr *new,
+			uint16_t *csum_field) {
+	int32_t csum = ntohs (~*csum_field);
+	uint8_t i;
+	for (i=0; i<8; i++) {
+		csum -= ntohs (var->s6_addr16 [i]);
+		var->s6_addr16 [i] = new->s6_addr16 [i];
+		csum += ntohs (var->s6_addr16 [i]);
+	}
+	csum = (csum & 0xffff) + (csum >> 16);
+	csum = (csum & 0xffff) + (csum >> 16);
+	*csum_field = htons (~csum);
 }
 
 
@@ -331,7 +370,8 @@ void icmp6_reply (size_t icmp6bodylen) {
 			: allnodes_linklocal_address,
 		16);
 	memcpy (v4src6, router_linklocal_address, 16);
-	v4v6icmpcksum = icmp6_checksum (ntohs (v4v6plen));
+	v4v6icmpcksum = icmp6_checksum (v4src6, v4dst6,
+				v4v6payload, ntohs (v4v6plen));
 	//
 	// Send the message to the IPv4 originator port
 printf ("Sending ICMPv6-IPv6-UDP-IPv4 to %d.%d.%d.%d:%d, result = %zd\n",
@@ -532,7 +572,9 @@ void handle_4to6_nd (ssize_t v4ngbcmdlen) {
 	if (v4v6icmpcode != 0) {
 		return;
 	}
-	if (icmp6_checksum (v4ngbcmdlen - sizeof (struct ip6_hdr)) != v4v6icmpcksum) {
+	if (icmp6_checksum (v4src6, v4dst6,
+				v4v6payload, v4ngbcmdlen-sizeof (struct ip6_hdr)
+			) != v4v6icmpcksum) {
 		return;
 	}
 	//
@@ -610,23 +652,30 @@ void handle_4to6_masquerading (ssize_t v4datalen) {
 	fprintf (stderr, "Traffic to 6bed4router may be fit for masquerading\n");
 	uint16_t *portpairs = NULL;
 	uint16_t numpairs = 0;
-	uint16_t port;
+	uint16_t port = 0;
+	uint16_t *csum_field = NULL;
 	switch (v4v6nexthdr) {
+#ifdef CHECKSUM_SCTP_WOULD_BE_LIKE_FOR_OTHERS
 	case IPPROTO_SCTP:
 		portpairs = masqportpairs [0];	// 's'
 		numpairs  = num_masqportpairs [0];
 		port = ntohs (v4v6sctpdstport);
+		csum_field = &v4v6sctpcksum;
 		break;
+#endif
 	case IPPROTO_TCP:
 		portpairs = masqportpairs [1];	// 't'
 		numpairs  = num_masqportpairs [1];
 		port = ntohs (v4v6tcpdstport);
+		csum_field = &v4v6tcpcksum;
 		break;
 	case IPPROTO_UDP:
 		portpairs = masqportpairs [2];	// 'u'
 		numpairs  = num_masqportpairs [2];
 		port = ntohs (v4v6udpdstport);
+		csum_field = &v4v6udpcksum;
 		break;
+	//TODO// ICMPv6
 	default:
 		break;
 	}
@@ -636,7 +685,9 @@ void handle_4to6_masquerading (ssize_t v4datalen) {
 			//
 			// Replace masqueraded address by 6bed4router's
 			fprintf (stderr, "DEBUG: Passing traffic to masquerading address number %d\n", portpairs [2]);
-			memcpy (v4dst6, masqhost [portpairs [2]], 16);
+			masquerade_address (v4dst6,
+				(struct in6_addr *) masqhost [portpairs [2]],
+				csum_field);
 			//
 			// Forward immediately, and return from this function
 printf ("Writing Masqueraded IPv6, result = %zd\n",
@@ -792,9 +843,33 @@ printf ("Received plain unicast IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tunc
 	for (mqh=0; mqh<num_masqhost; mqh++) {
 		if (memcmp (v6src6, masqhost [mqh], 16) == 0) {
 printf ("Masqueraded sender address in 6to4 set to the client's 6bed4router address\n");
-			memcpy (v6src6, v6dst6, 15);
-			v6src6->s6_addr [15] &= 0xc0;
-			v6src6->s6_addr [16]  = 0x00;
+			uint16_t *csum_field = NULL;
+			struct in6_addr masq_src;
+			switch (v6nexthdr) {
+#ifdef CHECKSUM_SCTP_WOULD_BE_LIKE_FOR_OTHERS
+			case IPPROTO_SCTP:
+				csum_field = &v6sctpcksum;
+				break;
+#endif
+			case IPPROTO_TCP:
+				csum_field = &v6tcpcksum;
+				break;
+			case IPPROTO_UDP:
+				csum_field = &v6udpcksum;
+				break;
+			case IPPROTO_ICMPV6:
+				csum_field = &v6icmpcksum;
+				break;
+			default:
+				continue;
+			}
+			//
+			// Construct v6src6 from v6dst6, ending in 14 zero bits
+			memcpy (&masq_src, v6dst6, 16);
+			masq_src.s6_addr16 [7] &= htons (0xc000);
+			fprintf (stderr, "Masquerading cksum.old = 0x%04x, ", ntohs (*csum_field));
+			masquerade_address (v6src6, &masq_src, csum_field);
+			fprintf (stderr, "cksum.new = 0x%04x\n", ntohs (*csum_field));
 			break;
 		}
 	}
@@ -849,13 +924,14 @@ fflush (stdout);
 
 /* Option descriptive data structures */
 
-char *short_opt = "l:L:d:ht:u:s:m:";
+char *short_opt = "l:L:d:hit:u:s:m:";
 
 struct option long_opt [] = {
 	{ "v4listen", 1, NULL, 'l' },
 	{ "v6prefix", 1, NULL, 'L' },
 	{ "tundev", 1, NULL, 'd' },
 	{ "help", 0, NULL, 'h' },
+	{ "icmp", 0, NULL, 'i' },
 	{ "tcp", 1, NULL, 't' },
 	{ "udp", 1, NULL, 'u' },
 	{ "sctp", 1, NULL, 's' },
@@ -923,7 +999,7 @@ int process_args (int argc, char *argv []) {
 			v6server = strdup (optarg);
 			*slash64 = '/';
 			v6prefix = optarg;
-			if (!v6server || inet_pton (AF_INET6, v6server, &v6listen) <= 0) {
+			if (!v6server || (inet_pton (AF_INET6, v6server, &v6listen) <= 0)) {
 				ok = 0;
 				fprintf (stderr, "%s: Failed to parse IPv6 prefix %s\n", program, optarg);
 				break;
@@ -953,6 +1029,7 @@ int process_args (int argc, char *argv []) {
 			// Masqueraded port (range) for SCTP, TCP, UDP
 			//TODO// Should we support ICMPv6 as well? [honeypots]
 			if (num_masqhost == 0) {
+				//TODO// Reference v6listen instead of ::1
 				inet_pton (AF_INET6, "::1", masqhost [0]);
 				num_masqhost = 1;
 			}

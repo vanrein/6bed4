@@ -15,7 +15,7 @@
 6bed4router \- server-side daemon for 6bed4 service
 .SH SYNOPSYS
 .B 6bed4router
-[\fB\-d\fR \fI/dev/tunX\fR] \fB\-l\fR \fIv4addr\fR \fB\-L\fR \fIv6prefix/64\fR [\fB\-m\fR/\fBs\fR/\fBt\fR/\fBu\fR \fI...\fR]
+[\fB\-d\fR \fI/dev/tunX\fR] \fB\-l\fR \fIv4addr\fR \fB\-L\fR \fIv6prefix/64\fR [\fB\-m\fR/\fB\-i\fR/\fBs\fR/\fBt\fR/\fBu\fR \fI...\fR]
 .PP
 .B 6bed4router
 [\fB\-h\fR]
@@ -128,10 +128,17 @@ authentication services to honeypots.
 \fB\-udp\fR \fIport\fR[\fB:\fIport\fR]
 Apply the masquerading port or port range for SCTP, TCP or UDP to the
 masquerading host set by the last preceding \fB\-\-masqhost\fR option,
-or use \fB::1\fR
+or use the tunnel's IPv6-side address
 if none was set yet.  Ports that have been previously bound will not make it,
 so it is possible to first relay a port with \fB\-t 22\fR to a service and
 then pass the rest to a honeypot with \fB\-t 1:65535\fR.
+.TP
+\fB\-i\fR
+Apply masquerading for ICMPv6 to the masquerading host set by the last
+preceding \fB\-\-masqhost\fR option, or use the tunnel's IPv6-side address
+if none was set yet.  The ICMPv6 messages with a special meaning to 6bed4
+are exempted (Router and Neighbor Solicitation and Advertisement, as well
+as Redirect) but other messages will be masqueraded.
 .TP
 \fB\-h\fR
 .TP
