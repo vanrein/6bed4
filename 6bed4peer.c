@@ -330,11 +330,6 @@ bool setup_tunnel_address (void) {
 	if (ok && system (cmd) != 0) {
 		ok = 0;
 	}
-	snprintf (cmd, 512, "/sbin/ip link set %s address %02x:%02x:%02x:%02x:%02x:%02x", ifreq.ifr_name, v6lladdr [0], v6lladdr [1], v6lladdr [2], v6lladdr [3], v6lladdr [4], v6lladdr [5]);
-	if (ok && system (cmd) != 0) {
-	syslog (LOG_CRIT, "Failed to set MAC address for link %s to %02x:%02x:%02x:%02x:%02x%s\n", ifreq.ifr_name, v6lladdr [0], v6lladdr [1], v6lladdr [2], v6lladdr [3], v6lladdr [4], v6lladdr [5]);
-		ok = false;
-	}
 	snprintf (cmd, 512, "/sbin/ip link set %s up mtu %d", ifreq.ifr_name, MTU);
 	if (ok && system (cmd) != 0) {
 		ok = false;
@@ -901,8 +896,8 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 			memcpy (v6listen.s6_addr + 0, destprefix, 16);
 			v6listen.s6_addr [14] &= 0xc0;
 			v6listen.s6_addr [15]  = 0x01;	// choose client 1
-			memcpy (v6listen_linklocal_complete, v6listen_linklocal, 8);
-			memcpy (v6listen_linklocal_complete, v6listen.s6_addr + 8, 8);
+			memcpy (v6listen_linklocal_complete + 0, v6listen_linklocal, 8);
+			memcpy (v6listen_linklocal_complete + 8, v6listen.s6_addr + 8, 8);
 			memcpy (v6lladdr, destprefix + 8, 6);
 			//TODO// Is v6lladdr useful?  Should it include lanip?
 			v6lladdr [0] &= 0xfc;
