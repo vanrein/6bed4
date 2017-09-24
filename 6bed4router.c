@@ -25,6 +25,7 @@
  */
 
 
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -110,13 +111,17 @@ struct {
 			struct ip6_hdr v6hdr;
 			uint8_t data [MTU - sizeof (struct ip6_hdr)];
 		} idata;
-		struct {
+		struct v4frame {
 			struct ip6_hdr v6hdr;
 			union {
 				struct icmp6_hdr  v6icmphdr;
 				struct my_sctphdr v6sctphdr;
 				struct tcphdr     v6tcphdr ;
 				struct udphdr     v6udphdr ;
+				struct {
+					struct udphdr     v6udphdr;
+					struct my_sctphdr v6sctphdr;
+				} tdata;
 			} adata;
 		} ndata;
 	} udata;
@@ -138,9 +143,15 @@ struct {
 #define v4v6icmpcode	( v4data6.udata.ndata.adata.v6icmphdr.icmp6_code)
 #define v4v6icmpcksum	( v4data6.udata.ndata.adata.v6icmphdr.icmp6_cksum)
 
+#define v4v6sctpofs	(offsetof (struct v4frame,adata.v6sctphdr))
 #define v4v6sctpsrcport	( v4data6.udata.ndata.adata.v6sctphdr.source)
 #define v4v6sctpdstport	( v4data6.udata.ndata.adata.v6sctphdr.dest)
 #define v4v6sctpcksum	( v4data6.udata.ndata.adata.v6sctphdr.cksum)
+
+#define v4v6tunsctpofs	(offsetof (struct v4frame,adata.tdata.v6sctphdr))
+#define v4v6tunsctpsrcport ( v4data6.udata.ndata.adata.tdata.v6sctphdr.source)
+#define v4v6tunsctpdstport ( v4data6.udata.ndata.adata.tdata.v6sctphdr.dest)
+#define v4v6tunsctpcksum   ( v4data6.udata.ndata.adata.tdata.v6sctphdr.cksum)
 
 #define v4v6tcpsrcport	( v4data6.udata.ndata.adata.v6tcphdr.source)
 #define v4v6tcpdstport	( v4data6.udata.ndata.adata.v6tcphdr.dest)
@@ -157,13 +168,17 @@ struct {
 	struct tun_pi tun;
 	union {
 		uint8_t data [MTU];
-		struct {
+		struct v6frame {
 			struct ip6_hdr v6hdr;
 			union {
 				struct icmp6_hdr  v6icmphdr;
 				struct my_sctphdr v6sctphdr;
 				struct tcphdr     v6tcphdr ;
 				struct udphdr     v6udphdr ;
+				struct {
+					struct udphdr     v6udphdr;
+					struct my_sctphdr v6sctphdr;
+				} tdata;
 			} adata;
 		} ndata;
 	} udata;
@@ -182,10 +197,16 @@ struct {
 #define v6icmpcksum	( v6data6.udata.ndata.adata.v6icmphdr.icmp6_cksum)
 
 #define v6sctpcksum	( v6data6.udata.ndata.adata.v6sctphdr.cksum)
+#define v6tunsctpcksum	( v6data6.udata.ndata.adata.tdata.v6sctphdr.cksum)
+
+#define v6sctpofs	(offsetof(struct v6frame,adata.v6sctphdr))
+#define v6tunsctpofs	(offsetof(struct v6frame,adata.tdata.v6sctphdr))
 
 #define v6tcpcksum	( v6data6.udata.ndata.adata.v6tcphdr.check)
 
 #define v6udpcksum	( v6data6.udata.ndata.adata.v6udphdr.check)
+#define v6udpdstport	( v6data6.udata.ndata.adata.v6udphdr.dest)
+#define v6udpsrcport	( v6data6.udata.ndata.adata.v6udphdr.source)
 
 
 uint8_t router_linklocal_address [] = {
@@ -520,18 +541,6 @@ bool validate_originator (struct in6_addr *ip6) {
 
 
 /*
- * Given a protocol and a port number, locate the masqhost that would match.
- * The protocol is 0 for SCTP, 1 for TCP, 2 for UDP (alphabetic sequence).
- * Returns a pointer to the address or NULL if not found.
- */
-uint8_t *protoport2masqhost (uint8_t proto, uint16_t port) {
-	//NOTUSED// TODO:IMPLEMENT
-	return NULL;
-}
-
-
-
-/*
  * Major packet processing functions
  */
 
@@ -658,15 +667,16 @@ void handle_4to6_masquerading (ssize_t v4datalen) {
 	uint16_t numpairs = 0;
 	uint16_t port = 0;
 	uint16_t *csum_field = NULL;
+	uint16_t sctp_offset = 0;
+	uint16_t skip_csum;
 	switch (v4v6nexthdr) {
-#ifdef CHECKSUM_SCTP_WOULD_BE_LIKE_FOR_OTHERS
 	case IPPROTO_SCTP:
 		portpairs = masqportpairs [0];	// 's'
 		numpairs  = num_masqportpairs [0];
 		port = ntohs (v4v6sctpdstport);
-		csum_field = &v4v6sctpcksum;
+		csum_field = &skip_csum;
+		sctp_offset = v4v6sctpofs;
 		break;
-#endif
 	case IPPROTO_TCP:
 		portpairs = masqportpairs [1];	// 't'
 		numpairs  = num_masqportpairs [1];
@@ -678,6 +688,13 @@ void handle_4to6_masquerading (ssize_t v4datalen) {
 		numpairs  = num_masqportpairs [2];
 		port = ntohs (v4v6udpdstport);
 		csum_field = &v4v6udpcksum;
+		if ((port == 9899) && (v4v6udpsrcport == v4v6udpdstport)) {
+			// SCTP tunneled over UDP (keep csum_field)
+			portpairs = masqportpairs [0];
+			numpairs = num_masqportpairs [0];
+			port = ntohs (v4v6tunsctpdstport);
+			sctp_offset = v4v6tunsctpofs;
+		}
 		break;
 	case IPPROTO_ICMPV6:
 		portpairs = icmp_portpairs;
@@ -697,6 +714,12 @@ void handle_4to6_masquerading (ssize_t v4datalen) {
 			masquerade_address (v4dst6,
 				(struct in6_addr *) masqhost [portpairs [2]],
 				csum_field);
+			if (sctp_offset > 0) {
+				//TODO// Recompute SCTP's CRC-32 checksum
+				// recompute_sctp_checksum (ip6hdr, sctp_offset, framelen);
+				//BUT: SCTP checksum does not use pseudo IPhdr
+				//SO:  Address masquerading goes undetected :-D
+			}
 			//
 			// Forward immediately, and return from this function
 printf ("Writing Masqueraded IPv6, result = %zd\n",
@@ -853,18 +876,24 @@ printf ("Received plain unicast IPv6 data, flags=0x%04x, proto=0x%04x\n", v6tunc
 		if (memcmp (v6src6, masqhost [mqh], 16) == 0) {
 printf ("Masqueraded sender address in 6to4 set to the client's 6bed4router address\n");
 			uint16_t *csum_field = NULL;
+			uint16_t fake_csum;
 			struct in6_addr masq_src;
+			uint16_t sctp_offset = 0;
 			switch (v6nexthdr) {
-#ifdef CHECKSUM_SCTP_WOULD_BE_LIKE_FOR_OTHERS
 			case IPPROTO_SCTP:
-				csum_field = &v6sctpcksum;
+				csum_field = &fake_csum;
+				sctp_offset = v6sctpofs;
 				break;
-#endif
 			case IPPROTO_TCP:
 				csum_field = &v6tcpcksum;
 				break;
 			case IPPROTO_UDP:
 				csum_field = &v6udpcksum;
+				if ((v6udpsrcport == v6udpdstport) &&
+						(v6udpsrcport == htons (9899))) {
+					// SCTP tunneled over UDP
+					sctp_offset = v6tunsctpofs;
+				}
 				break;
 			case IPPROTO_ICMPV6:
 				csum_field = &v6icmpcksum;
@@ -878,6 +907,12 @@ printf ("Masqueraded sender address in 6to4 set to the client's 6bed4router addr
 			masq_src.s6_addr16 [7] &= htons (0xc000);
 			fprintf (stderr, "Masquerading cksum.old = 0x%04x, ", ntohs (*csum_field));
 			masquerade_address (v6src6, &masq_src, csum_field);
+			if (sctp_offset > 0) {
+				//TODO// Recompute SCTP's CRC-32 checksum
+				// recompute_sctp_checksum (ip6hdr, sctp_offset, framelen);
+				//BUT: SCTP checksum does not use pseudo IPhdr
+				//SO:  Address masquerading goes undetected :-D
+			}
 			fprintf (stderr, "cksum.new = 0x%04x\n", ntohs (*csum_field));
 			break;
 		}
