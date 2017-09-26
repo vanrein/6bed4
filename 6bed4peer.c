@@ -109,7 +109,11 @@ struct in_addr  v4listen;
 
 
 struct {
+#ifdef PEER_USE_TAP
 	struct ethhdr eth;
+#else
+	struct tun_pi tun;
+#endif
 	union {
 		struct {
 			struct ip6_hdr v6hdr;
@@ -122,7 +126,11 @@ struct {
 	} udata;
 } __attribute__((packed)) v4data6;
 
+#ifdef PEER_USE_TAP
 #define v4ether 	(v4data6.eth)
+#else
+#define v4tunpi6 	(v4data6.tun)
+#endif
 #define v4data		((uint8_t *) &v4data6.udata)
 #define v4hdr6		(&v4data6.udata.idata.v6hdr)
 #define v4src6		(&v4data6.udata.idata.v6hdr.ip6_src)
@@ -141,7 +149,11 @@ struct {
 
 
 struct {
+#ifdef PEER_USE_TAP
 	struct ethhdr eth;
+#else
+	struct tun_pi tun;
+#endif
 	union {
 		uint8_t data [MTU];
 		struct {
@@ -151,7 +163,11 @@ struct {
 	} udata;
 }  __attribute__((packed)) v6data6;
 
+#ifdef PEER_USE_TAP
 #define v6ether		(v6data6.eth)
+#else
+#define v6tuncmd	(v6data6.tun)
+#endif
 #define v6data		(v6data6.udata.data)
 #define v6hdr6		(&v6data6.udata.ndata.v6hdr)
 #define v6hops		(v6data6.udata.ndata.v6hdr.ip6_hops)
@@ -165,6 +181,11 @@ struct {
 #define v6icmp6csum	(v6data6.udata.ndata.v6icmp.icmp6_cksum)
 #define v6ndtarget	(&v6data6.udata.ndata.v6icmp.icmp6_data16[2])
 
+#ifdef PEER_USE_TAP
+#define HDR_SIZE        (sizeof(struct ethhdr))
+#else
+#define HDR_SIZE        (sizeof(struct tun_pi))
+#endif
 
 /* Structure for tasks in neighbor discovery queues
  */
@@ -294,7 +315,11 @@ bool setup_tunnel (void) {
 	if (!have_tunnel) {
 		memset (&ifreq, 0, sizeof (ifreq));
 		strncpy (ifreq.ifr_name, INTERFACE_NAME_6BED4, IFNAMSIZ);
+#ifdef PEER_USE_TAP
 		ifreq.ifr_flags = IFF_TAP | IFF_NO_PI;
+#else
+		ifreq.ifr_flags = IFF_TUN;
+#endif
 		if (ok && (ioctl (v6sox, TUNSETIFF, (void *) &ifreq) == -1)) {
 			syslog (LOG_CRIT, "Failed to set interface name: %s\n", strerror (errno));
 			ok = false;
@@ -523,7 +548,7 @@ void redirect_reply (uint8_t *ngbc_llremote, metric_t ngbc_metric) {
 	memcpy (v6src6, &v6listen, 16);
 	memcpy (v6dst6, v4src6, 16);
 	v6icmp6csum = icmp6_checksum ((uint8_t *) v4hdr6, 8 + 16 + 16);
-	handle_6to4_plain_unicast (sizeof (struct ethhdr) + 40 + 8 + 16 + 16, ngbc_llremote);
+	handle_6to4_plain_unicast (HDR_SIZE + 40 + 8 + 16 + 16, ngbc_llremote);
 } 
 
 
@@ -570,12 +595,15 @@ size_t icmp6_prefix (size_t optidx, uint8_t endlife) {
  * a target IPv6 address to service.
  */
 void advertise_6bed4_public_service (struct ndqueue *info) {
+#ifdef PEER_USE_TAP
+
 	if (info) {
 		memcpy (v6ether.h_dest, info->source_lladdr, 6);
 	} else {
 		memcpy (v6ether.h_dest, v6ether.h_source, 6);
 	}
 	memcpy (v6ether.h_source, SERVER_6BED4_PORT_IPV4_MACSTR, 6);
+#endif
 	memcpy (v6data, ipv6_defaultrouter_neighbor_advertisement, 8);
 	if (info) {
 		memcpy (v6dst6, &info->source, 16);
@@ -594,7 +622,7 @@ void advertise_6bed4_public_service (struct ndqueue *info) {
 		memcpy (&v6icmp6data [4], &info->target, 16);
 	}
 	v6icmp6csum = icmp6_checksum ((uint8_t *) v6hdr6, 32);
-	int sent = write (v6sox, &v6data6, sizeof (struct ethhdr) + sizeof (ipv6_defaultrouter_neighbor_advertisement));
+	int sent = write (v6sox, &v6data6, HDR_SIZE + sizeof (ipv6_defaultrouter_neighbor_advertisement));
 	if (info) {
 		syslog (LOG_DEBUG, "TODO: Neighbor Discovery failed to contact directly -- standard response provided\n");
 	} else {
@@ -796,13 +824,15 @@ syslog (LOG_DEBUG, "Message of %zd bytes from neighbor cache, total is now %zd\n
 void handle_4to6_plain (ssize_t v4datalen, struct sockaddr_in *sin) {
 	//
 	// Send the unwrapped IPv6 message out over v6sox
+#ifdef PEER_USE_TAP
 	v4ether.h_proto = htons (ETH_P_IPV6);
 	memcpy (v4ether.h_dest,   v6lladdr, 6);
 	v4ether.h_source [0] = ntohs (sin->sin_port) & 0xff;
 	v4ether.h_source [1] = ntohs (sin->sin_port) >> 8;
 	memcpy (v4ether.h_source + 2, &sin->sin_addr, 4);
+#endif
 syslog (LOG_INFO, "Writing IPv6, result = %zd\n",
-	write (v6sox, &v4data6, sizeof (struct ethhdr) + v4datalen)
+	write (v6sox, &v4data6, HDR_SIZE + v4datalen)
 )
 	;
 }
@@ -1108,7 +1138,7 @@ void handle_6to4_plain_unicast (const ssize_t pktlen, const uint8_t *lladdr) {
 	ntohs (v4dest.sin_port),
 		sendto (v4sox,
 				v6data,
-				pktlen - sizeof (struct ethhdr),
+				pktlen - HDR_SIZE,
 				MSG_DONTWAIT,
 				(struct sockaddr *) &v4dest,
 				sizeof (struct sockaddr_in))
@@ -1153,11 +1183,13 @@ void handle_6to4_nd (ssize_t pktlen) {
 		memcpy (v6dst6, v6src6, 16);
 		memcpy (v6src6, v6listen_linklocal_complete, 16);
 		v6icmp6csum = icmp6_checksum ((uint8_t *) v6hdr6, 4 + writepos);
+#ifdef PEER_USE_TAP
 		v6ether.h_proto = htons (ETH_P_IPV6);
 		memcpy (v6ether.h_dest, v6ether.h_source, 6);
 		memcpy (v6ether.h_source, v6lladdr, 6);
+#endif
 		syslog (LOG_INFO, "Replying Router Advertisement to the IPv6 Link, result = %zd\n",
-			write (v6sox, &v6data6, sizeof (struct ethhdr) + sizeof (struct ip6_hdr) + 4 + writepos)
+			write (v6sox, &v6data6, HDR_SIZE + sizeof (struct ip6_hdr) + 4 + writepos)
 		)
 			;
 		break;
@@ -1191,14 +1223,19 @@ void handle_6to4_nd (ssize_t pktlen) {
 			v6plen = htons (4 + 28);
 			memcpy (v6dst6, v6src6, 16);
 			memcpy (v6src6, &v6listen, 16);
+#ifdef PEER_USE_TAP
 			memcpy (v6ether.h_dest, v6ether.h_source, 6);
 			memcpy (v6ether.h_source, v6lladdr, 6);
+#endif
 			v6icmp6csum = icmp6_checksum ((uint8_t *) v6hdr6, 4 + 28);
 syslog (LOG_DEBUG, "Sending trivial reply to fe80::/64 type query\n");
-			write (v6sox, &v6data6, sizeof (struct ethhdr) + sizeof (struct ip6_hdr) + 4 + 28);
+			write (v6sox, &v6data6, HDR_SIZE + sizeof (struct ip6_hdr) + 4 + 28);
 			return;
 		} else {
+// TODO
+#ifdef PEER_USE_TAP
 			enqueue ((struct in6_addr *) v6ndtarget, (struct in6_addr *) v6src6, v6ether.h_source);
+#endif
 		}
 		break;
 	case ND_NEIGHBOR_ADVERT:
@@ -1223,7 +1260,6 @@ syslog (LOG_DEBUG, "Sending trivial reply to fe80::/64 type query\n");
 	}
 }
 
-
 /*
  * Receive an IPv6 package, check its address and pickup IPv4 address and
  * port, then package it as a tunnel message and forward it to IPv4:port.
@@ -1231,15 +1267,29 @@ syslog (LOG_DEBUG, "Sending trivial reply to fe80::/64 type query\n");
  * locally generated.
  */
 void handle_6to4 (void) {
+#ifndef PEER_USE_TAP
+	static uint8_t lladdr [] =
+	{
+		// UDP port
+		UDP_PORT_6BED4 & 0xff,
+		UDP_PORT_6BED4 >> 8,
+		// IPv4 address
+		SERVER_6BED4_IPV4_INT0,
+		SERVER_6BED4_IPV4_INT1,
+		SERVER_6BED4_IPV4_INT2,
+		SERVER_6BED4_IPV4_INT3
+	};
+#endif
 	//
 	// Receive the IPv6 package and ensure a consistent size
 	size_t rawlen = read (v6sox, &v6data6, sizeof (v6data6));
 	if (rawlen == -1) {
 		return;		/* failure to read, drop */
 	}
-	if (rawlen < sizeof (struct ethhdr) + sizeof (struct ip6_hdr) + 1) {
+	if (rawlen < HDR_SIZE + sizeof (struct ip6_hdr) + 1) {
 		return;		/* packet too small, drop */
 	}
+#ifdef PEER_USE_TAP
 	if (v6ether.h_proto != htons (ETH_P_IPV6)) {
 		return;		/* not IPv6, drop */
 	}
@@ -1250,6 +1300,7 @@ void handle_6to4 (void) {
 		syslog (LOG_DEBUG, "TODO: Self-to-self messaging in IPv6 stack ignored\n");
 		return;
 	}
+#endif
 	/*
 	 * Distinguish types of traffic:
 	 * Non-plain, Plain Unicast, Plain Multicast
@@ -1267,7 +1318,12 @@ syslog (LOG_DEBUG, "Forwarding non-plain unicast from IPv6 to 6bed4\n");
 			return;
 		}
 syslog (LOG_DEBUG, "Forwarding plain unicast from IPv6 to 6bed4\n");
+#ifdef PEER_USE_TAP
 		handle_6to4_plain_unicast (rawlen, v6ether.h_dest);
+#else
+		handle_6to4_plain_unicast (rawlen, lladdr);
+#endif
+
 	} else {
 		//
 		// Plain Multicast
@@ -1731,6 +1787,10 @@ int main (int argc, char *argv []) {
 	memcpy (&v4listen, &v4peer.sin_addr, 4);
 	memset (&v4bind, 0, sizeof (v4bind));
 	v4bind.sin_family = AF_INET;
+#ifndef PEER_USE_TAP
+	v4tunpi6.flags = 0;
+	v4tunpi6.proto = htons (ETH_P_IPV6);
+#endif
 	//
 	// Parse commandline arguments
 	if (!process_args (argc, argv)) {
