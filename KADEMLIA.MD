@@ -92,12 +92,34 @@ As it turns out, standard ICMPv6 messages suffice, together with the notion
 of link-local addresses that can store up to 64 bits of addressing information
 with a link-specific interpretation.
 
-We shall use `fe80::/64` addresses to indicate the remote end point, with
-the following additional information:
+The link-local addresses used to convey Kademlia peers are not the usual
+`fe80::/64` addresses, but they are 6bed4 address.  Depending on the
+[prefix and its promises](PREFIXES.MD), there may be a globally routable
+IPv6 address or not; there may or may not be an IPv4 address in the top
+half address.  In any case, the lower half of the address can be interpreted
+for 6bed4 peering, so this will lead to an IPv4 address and an UDP port.
+It is not important if this lower half information points to an end user
+or a Kademlia node; as long as it is usable for routing purposes.
 
-  * **TODO:** how; specifically, IPv6 addresses don't fit in here!
+This is perhaps the vital part of peer-to-peer routing, the ability of
+end users to perform routing.  To this end, they should be clear about
+their reachability, which usually hinges on either local port forwarding
+or a fallback server that is reachable under an IPv4 address.
 
-Kademlia uses a number of messages:
+Note how the routability of an IPv6 prefix is not dependent on the
+actual presence of a native IPv6 route to the Kademlia node; we created
+6bed4 precisely to overcome that obstacle.  And `fc64::/16` is also
+usable for the same purposes, as this clearly defines a local network
+to be used.  When a routable IPv6 prefix is provided, especially when it
+is a native one, then connectivity over IPv6 is also arranged, which
+is desirable as an alternative to IPv4-based routing (using 6bed4).
+
+At some point in the future, we may not be able to rely on IPv4 as a
+routing layer; by then, the address 0.0.0.0 will be used in the lower
+half of the address to indicate that situation.
+
+Kademlia uses a limited number of
+[protocol messages](https://en.wikipedia.org/wiki/Kademlia#Protocol_messages):
 
   * `ping` to verify that a node is alive.  This may be done using an ICMPv6
     message sent to the address that we know lives on the other end.
@@ -121,6 +143,11 @@ thereby changing the upstream party that they rely on.
 **TODO:** We might also exploit diversity through scattering, but only when
 the client can be sure to sit on just a peer-to-peer network, without any
 native routing or other prefixes being used than `fd00::/8`.
+
+**TODO:** Clients can route between networks if they like (and be present
+on each of the connected networks).  Challenge is to swap encryption while
+moving from one network to another.  ECDH may be part of the solution, or
+the router may take do this for egress/ingress "local" network frames.
 
 
 Privacy and Security
@@ -156,6 +183,11 @@ identity of a client.  This is the private substitute for an email address.
 Client Address Privacy
 ----------------------
 
+**TODO:** This is probably overkill.  It was worth a shot, but leads to
+a chaotic design of everything involved.  In general, join a group that
+you trust, and want to contact directly.  Join many groups if you like.
+Route between groups and make your concealment efforts at that point.
+
 When working on a client's privacy, we should not reveal their address to
 the world.  And since the lower half of the address is only up for
 interpretation by others using the same /64 prefix, this defines a good
@@ -180,4 +212,21 @@ through at least two fallback routers; one to encrypt our own
 lower address half, and another to decrypt the target's lower half.
 And the opposite on reply traffic, of course.
 
+A much better solution to this problem is possible on a server.  This
+recognises that the normal extension of `fd00::/8` is up to a /48
+prefix, and that this is already considered sufficient protection from
+clashes.  So, a server might reserve a few of the last bits of its /64
+prefix for an index.  This might look like `fdXX:XXXX:XXXX:XXXA::/64`
+and `fdXX:XXXX:XXXX:XXXB::/64` and perhaps more.  Kademlia routing
+will make it easy to pickup on both addresses on the same node.
+The trick is now to look at the addresses shown to a client and
+make sure that a the source and destination address never come from
+the same prefix.  It is easy enough for the router to bounce traffic
+between its clients with altered encryption, if so desired.
+
+**TODO:** Another task would be to control the visibility of addresses
+in non-IP protocols such as DNS.  This may be more challenging, though
+not undoable either, if this is the only way to find addresses.  The
+problem probably is that this is not the case; all sorts of protocols
+may pass around peer addresses and we might end up re-inventing NAT...
 
