@@ -200,12 +200,32 @@ shell# ip -6 link show dev dumbo0
     link/ether 11:22:33:44:55:66 brd ff:ff:ff:ff:ff:ff
 ```
 
-(Variations on this are possible.  You could create virtuel ethernet devices
-to link directly to others, possibly in another networking name space, and so
-on.  And you could mix in any way you like, by assigning different /112
+Variations on this are many...
+
+ 1. You could create virtuel ethernet devices
+    to link directly to others, possibly in another
+    [networking name space](https://blog.scottlowe.org/2013/09/04/introducing-linux-network-namespaces/)
+    or [container](https://linuxcontainers.org), and so on.
+ 2. You could setup a tunnel with a tool like
+    [socat](http://www.dest-unreach.org/socat/)
+    to relay traffic to another network, where you unleash the
+    address range via
+    [Router Advertisements](http://www.litech.org/radvd/) and
+    [DHCPv6](https://www.sixxs.net/wiki/Configuring_ISC_DHCPv6_Server).
+ 3. You could setup a
+    [translation](http://openhip.sourceforge.net) to logical addresses using the
+    [Host Identity Protocol](https://en.wikipedia.org/wiki/Host_Identity_Protocol).
+ 4. You could export an address range over a
+    [DNS tunnel](http://code.kryo.se/iodine/).
+ 5. You could run [L2TP](http://openl2tp.org)
+    to connect networks based on the /112 IPv6 prefix, possibly
+    as a backend to PPPoE clients.  Add IPsec and you have a nice,
+    standards-compliant VPN.
+
+And you could mix in any way you like, by assigning different /112
 prefixes to each interface.  Given the port-0 assumption, you have 4294967296
 of those ranges for a total of 281474976710656 hosts, we hope that you will
-agree that 6bed4 leaves you some room to play.)
+agree that 6bed4 leaves you some room to play.
 
 Again, we should ensure forwarding:
 
@@ -239,4 +259,27 @@ shell# ip -6 addr show dev dumbo0
 Do not forget to remove the /64 prefixes from `eth0`, as coded above.
 
 You can now run `6bed4router` without further problems.
+
+## Poorly Configured Upstreams
+
+Now that you are running a router, you may be assuming that your uplink
+does, too.  This may not always be true.  For instance:
+
+  * You may be running the `6bed4router` on an ethernet LAN
+  * Your upstream may not be configured with your link-local address
+    for your IPv6 range
+
+In these cases, you may be subjected to Neighbor Solicitation requests
+for the various IPv6 addresses that make up 6bed4.  This is a pitty, as
+the variety of addresses may be a bit much for the upstream.  So if you
+can, tell your upstream to do something like
+
+```
+shell$ ip -6 route add 2001:db9:9:10::/64 via fe80::aa:bb:cc:ff:fe::dd:ee:ff/64 dev eth0
+```
+
+If this is not an option, for instance because the router is managed
+by another party that does not respond to such inquiries, you may have to
+[Proxy Neighbor Discovery](https://github.com/DanielAdolfsson/ndppd/)
+instead.  Once it runs, your connections should magically come alive.
 
