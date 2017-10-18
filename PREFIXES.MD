@@ -49,20 +49,21 @@ Candidate Prefixes
 
 The following prefixes spring to mind for use with 6bed4:
 
-  * TBD1::/32 is the perfect prefix for 6bed4.  It supports the top-half and
-    bottom-half structures, and is globally defined to do so.
+  * `TBD1::/32` and its extension `TBD1:<ipv4>::/64` are the perfect prefixes
+    for 6bed4.  They support the top-half and bottom-half structures, and are
+    globally defined to do so.
 
-  * fc64:<netid>:<ipv4>::/64 may be used for 6bed4 as well.  The <netid> could
+  * `fc64:<netid>:<ipv4>::/64` may be used for 6bed4 as well.  The `<netid>` could
     be varied to indicate different applications, so the prefix is as for 6bed4,
-    the fc64:<netid>::/32 prefix.  The fc00::/8 prefix indicates locally unique
+    the `fc64:<netid>::/32` prefix.  The `fc00::/8` prefix indicates locally unique
     addresses.  Since this also limits the scope, any connection between such
     nets may be read as an indication that they are on the same local net and
-    the interpretation may therefore be assumed.  This is true for all fc00::/8
-    addresses, but we suggest leaving room for other uses by setting fc64::/8
+    the interpretation may therefore be assumed.  This is true for all `fc00::/8`
+    addresses, but we suggest leaving room for other uses by setting `fc64::/8`
     specifically for the 6bed4 interpretation of the remainder of the address.
-    Note that fd00::/8 also covers unique local addresses, but it is followed
+    Note that `fd00::/8` also covers unique local addresses, but it is followed
     by random bits, so no policy can be applied without breaking standards
-    (and software).  Note that fc00::/8 is a local scoped name space, but it
+    (and software).  Note that `fc00::/8` is a local scoped name space, but it
     is possible to connect 6bed4peers behind different fallback servers.  It
     is simply a matter of distribution of addresses whether two peers will be
     able to communicate.  We believe this scheme is perfect for peer-to-peer
@@ -76,32 +77,32 @@ The following prefixes spring to mind for use with 6bed4:
     Other than this, any 6bed4peer collecting these addresses can do anything;
     native addresses can be reached, opportunistic connections to peers are
     possible and even the native services using port 0 would work.  The one
-    thing that is impossible, as with fc64::/16, is that independent
+    thing that is impossible, as with `fc64::/16`, is that independent
     6bed4router processes can serve the same prefix and have their 6bedpeer
     clients reach each other; this is due to the lacking fallback server in
     the top half.
 
-  * fdXX:XXXX:XXXX::/48 prefixes are based on randomly assigned bits.  We
+  * `fdXX:XXXX:XXXX::/48` prefixes are based on randomly assigned bits.  We
     shall expand this to a /64, and it should be clear that these IPv6
     addresses cannot be interpreted to hold an IPv4 address in their top half.
     Local convention however, may dictate the interpretation of the lower half
     for purposes of 6bed4 direct peering, provided that the other peer's
     top half is the same.  This is a local convention, not in any way
-    different from one for a native IPv6 / 48 or /64 prefix, but without
+    different from one for a native IPv6 /48 or /64 prefix, but without
     global routing.
 
-  * 2002:<ipv4>::/48 is based on the 6to4 prefix 2002::/16, but instead of
+  * `2002:<ipv4>::/48` is based on the 6to4 prefix `2002::/16`, but instead of
     using the peer's address and relying on the ability to pass IPv6 directly
     over IPv4, the 6bed4router can be used as an intermediate.  The place of
-    the <ipv4> address is different than after the /32 of normal 6bed4
+    the `<ipv4>` address is different than after the /32 of normal 6bed4
     addresses, but this is quickly inferred from the prefix.  So, given a
-    prefix 2002:<ipv4>:<netid>::/64 it is theoretically possible to interpret
-    <ipv4> as the fallback server, even for foreign networks.  The problem
+    prefix `2002:<ipv4>:<netid>::/64` it is theoretically possible to interpret
+    `<ipv4>` as the fallback server, even for foreign networks.  The problem
     with this is concluding that the lower half of the address contains the
     information typical for a 6bed4 peer.  This would lead to routing errors,
     and this assumption should only be made for prefixes announced over
     6bed4 in Router Advertisements.  In other words, the
-    2002:<ipv4>:<netid>::/64 prefix is no different to the 6bed4 peer than
+    `2002:<ipv4>:<netid>::/64` prefix is no different to the 6bed4 peer than
     a native IPv6 prefix; direct peering is only done under the same /64.
     Still, this leaves users with an option to have IPv6 addresses routed
     over a NAT-piercing protocol from a server that should have no trouble
@@ -126,18 +127,18 @@ when possible:
 
 This format works for prefixes of sizes 16, 32, 48 and 64:
 
-  * xxxx::/16 becomes top half xxxx:<ipv4>:be64::/64
-  * xxxx:yyyy::/32 becomes top half xxxx:yyyy:<ipv4>::/64
-  * xxxx:yyyy:zzzz::/48 becomes top half xxxx:yyyy:zzzz:be64::/64
-  * xxxx:yyyy:zzzz:wwww::/64 is unaltered
+  * `xxxx::/16` becomes top half `xxxx:<ipv4>:be64::/64`
+  * `xxxx:yyyy::/32` becomes top half `xxxx:yyyy:<ipv4>::/64`
+  * `xxxx:yyyy:zzzz::/48` becomes top half `xxxx:yyyy:zzzz:be64::/64`
+  * `xxxx:yyyy:zzzz:wwww::/64` is unaltered
 
 Specifically for the indicated candidate prefixes:
 
-  * TBD1::/32 becomes top half TBD1:<ipv4>::/64
-  * fc64:<netid>::/32 becomes top half fc64:<netid>:<ipv4>::/64
-  * xxxx:yyyy:zzzz::/48 becomes top half xxxx:yyyy:zzzz:be64::/64
-  * xxxx:yyyy:zzzz:wwww::/64 is unaltered
-  * 2002::/16 becomes top half 2002:<ipv4>:be64::/64
+  * `TBD1::/32` becomes top half `TBD1:<ipv4>::/64`
+  * `fc64:<netid>::/32` becomes top half `fc64:<netid>:<ipv4>::/64`
+  * `xxxx:yyyy:zzzz::/48` becomes top half `xxxx:yyyy:zzzz:be64::/64`
+  * `xxxx:yyyy:zzzz:wwww::/64` is unaltered
+  * `2002::/16` becomes top half `2002:<ipv4>:<netid>::/64`
 
 These do all support routing based on the bottom half.  Furthermore:
 
@@ -150,19 +151,19 @@ Routing Local Addresses
 
 As explained, some prefixes can be routed globally:
 
-  * TBD1::/32
-  * TBD1:<ipv4>::/64
+  * `TBD1::/32`
+  * `TBD1:<ipv4>::/64`
 
 Other prefixes are defined by local addressing policy and can only be
 directly peered to peers that match the prefix:
 
   * Native IPv6 /48 prefixes
   * Native IPv6 /64 prefixes
-  * fc64:<netid>:<ipv4>::/64
-  * fdXX:XXXX:XXXX::/48
-  * fdXX:XXXX:XXXX:XXXX::/64
-  * 2002:<ipv4>::/48
-  * 2002:<ipv4>:<netid>::/64
+  * `fc64:<netid>:<ipv4>::/64`
+  * `fdXX:XXXX:XXXX::/48`
+  * `fdXX:XXXX:XXXX:XXXX::/64`
+  * `2002:<ipv4>::/48`
+  * `2002:<ipv4>:<netid>::/64`
 
 Having to relay all traffic the fallback router is not necessarily the end
 of the (networking) world, however.  There are still options for routing.
@@ -190,8 +191,8 @@ any prefix cannot get out or in across the scope of interpretation, which
 usually means the primary network interface of a machine:
 
 ```
-ip6tables -A OUTPUT -d fc00::/7  -j DROP
-ip6tables -A  INPUT -s fc00::/7  -j DROP
+shell$ ip6tables -A OUTPUT -d fc00::/7  -j DROP
+shell$ ip6tables -A  INPUT -s fc00::/7  -j DROP
 ```
 
 Having made sure that no *default traffic* for local addresses are exchanged
