@@ -123,22 +123,26 @@ The sizes of the various prefixes vary.  The following things are added
 when possible:
 
   * the fallback server IPv4 address, when at least 32 bits are available;
-  * the literal value be64, to fill up any remaining 16 bits
+  * network identities, to fill up any remaining 16 bits
 
 This format works for prefixes of sizes 16, 32, 48 and 64:
 
-  * `xxxx::/16` becomes top half `xxxx:<ipv4>:be64::/64`
+  * `xxxx::/16` becomes top half `xxxx:<ipv4>:<netid>::/64` or `xxxx:<netid>:<ipv4>::/64`
   * `xxxx:yyyy::/32` becomes top half `xxxx:yyyy:<ipv4>::/64`
-  * `xxxx:yyyy:zzzz::/48` becomes top half `xxxx:yyyy:zzzz:be64::/64`
+  * `xxxx:yyyy:zzzz::/48` becomes top half `xxxx:yyyy:zzzz:<netid>::/64`
   * `xxxx:yyyy:zzzz:wwww::/64` is unaltered
 
 Specifically for the indicated candidate prefixes:
 
   * `TBD1::/32` becomes top half `TBD1:<ipv4>::/64`
   * `fc64:<netid>::/32` becomes top half `fc64:<netid>:<ipv4>::/64`
-  * `xxxx:yyyy:zzzz::/48` becomes top half `xxxx:yyyy:zzzz:be64::/64`
-  * `xxxx:yyyy:zzzz:wwww::/64` is unaltered
+  * `fc64::/16` becomes top half `fc64:<netid>:<ipv4>::/64`
+  * `fdXX:XXXX:XXXX::/48` becomes top half `fdXX:XXXX:XXXX:<netid>::/64`
+  * `fdXX:XXXX:XXXX:XXXX::/64` is unaltered
   * `2002::/16` becomes top half `2002:<ipv4>:<netid>::/64`
+  * `2002:<ipv4>::/48` becomes top half `2002:<ipv4>:<netid>::/64`
+  * `xxxx:yyyy:zzzz::/48` becomes top half `xxxx:yyyy:zzzz:<netid>::/64`
+  * `xxxx:yyyy:zzzz:wwww::/64` is unaltered
 
 These do all support routing based on the bottom half.  Furthermore:
 
@@ -191,8 +195,10 @@ any prefix cannot get out or in across the scope of interpretation, which
 usually means the primary network interface of a machine:
 
 ```
-shell$ ip6tables -A OUTPUT -d fc00::/7  -j DROP
-shell$ ip6tables -A  INPUT -s fc00::/7  -j DROP
+shell$ ip6tables -A OUTPUT -s fc00::/7 -j DROP
+shell$ ip6tables -A OUTPUT -d fc00::/7 -j DROP
+shell$ ip6tables -A  INPUT -s fc00::/7 -j DROP
+shell$ ip6tables -A  INPUT -d fc00::/7 -j DROP
 ```
 
 Having made sure that no *default traffic* for local addresses are exchanged
@@ -214,7 +220,9 @@ Among the many options that now arise are:
     using [extensive management tools](http://openl2tp.org).  L2TPv2
     handles 2 level of 16-bit identities, L2TPv3 uses 32-bit identities.
   * GRE, which can send traffic with 32-bit keys.  GRE over IPv6 in Linux
-    may not scale well, but over IPv4 it does.
+    may not scale well, but over IPv4 it does.  This is a simple technical
+    matter of adding hash tables to the IPv6 implementation as it has been
+    done for the IPv4 counterpart.
 
 The reason for emphasising the 32-bit identities in the above is that this
 might be used to automate tunneling to a given IPv4 address.  Note that the
@@ -276,10 +284,20 @@ when they adopt the 6bed4 mechanism, so it is probably worthwhile to
 consider.  Among the choices is the address prefix that will be used;
 `fc64:<netid>:<ipv4>::/64` is helpful because of the embedded IPv4
 address that can be interpreted as a hosting endpoint; on the other hand,
-`fdXX:XXXX:XXXX:XXXX::/64` introduces a kind of *network identity* in
-the random bits, and strictly relies on the interpretation of the
+`fdXX:XXXX:XXXX:XXXX::/64` introduces a kind of *network identity*
+in the random bits, and strictly relies on the interpretation of the
 lower half where all the opportunistic peering takes place, and it will
 never step out to someone else's router, which can happen when `fc64::/16`
 is used.  Abundant choices, but they are all good (in their own way).
 
+As an example: fallback serers may each use their own `fd00::/8` prefix
+with a random continuation that differs between fallback servers.
+Some mechanism of the network informs such servers about their joint
+action as a peer-to-peer network.  The fallback servers use the random
+bits to route using a mechanism like Kademlia, possibly after some initial
+randomisation as proposed by GNUnet.  This means that the fallback servers
+form a peer-to-peer network.  As far as the 6bed4 clients know, they can
+link to other `fd00::/8` local addresses, and route them up to their
+fallback server if the complete /64 differs from another that they might
+like to contact.
 
