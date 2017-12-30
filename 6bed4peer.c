@@ -364,7 +364,7 @@ bool setup_tunnel_address (void) {
 		ok = false;
 	}
 	if (default_route) {
-		snprintf (cmd, 512, "/sbin/ip -6 route add default via fe80:: dev %s", ifreq.ifr_name);
+		snprintf (cmd, 512, "/sbin/ip -6 route add default via fe80:: dev %s metric 1042", ifreq.ifr_name);
 		if (ok && system (cmd) != 0) {
 			ok = false;
 		}
