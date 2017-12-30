@@ -9,6 +9,10 @@ all: 6bed4router 6bed4peer
 tags: 6bed4router.c 6bed4peer.c
 	ctags 6bed4router.c 6bed4peer.c nonstd.h
 
+install: all
+	install 6bed4peer /usr/local/sbin
+	install 6bed4router /usr/local/sbin
+
 clean:
 	rm -f 6bed4router 6bed4peer tags
 

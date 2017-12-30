@@ -1,0 +1,14 @@
+[Unit]
+Description=IPv6 anywhere
+Documentation=http://0cpm.org/6bed4/
+
+[Install]
+Alias=tun6bed4
+WantedBy=network.target
+
+[Service]
+Type=simple
+RemainAfterExit=no
+ExecStart=/usr/local/sbin/6bed4peer -ref
+Restart=always
+RestartSec=60
