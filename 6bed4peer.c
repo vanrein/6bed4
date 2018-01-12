@@ -1852,8 +1852,13 @@ int main (int argc, char *argv []) {
 	// Setup fragmentation, QoS and TTL options
 	u_int yes = 1;
 	u_int no = 0;
-#ifdef IP_DONTFRAG
+#if defined(IP_DONTFRAG)
 	if (setsockopt (v4sox, IPPROTO_IP, IP_DONTFRAG, no, sizeof (no)) == -1) {
+		syslog (LOG_ERR, "Failed to permit fragmentation -- not all peers may be accessible with MTU 1280");
+	}
+#elif defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DONT)
+	int pmtuflag = IP_PMTUDISC_DONT;
+	if (setsockopt (v4sox, IP_MTU_DISCOVER, IP_MTU_DISCOVER, &pmtuflag, sizeof (pmtuflag)) == -1) {
 		syslog (LOG_ERR, "Failed to permit fragmentation -- not all peers may be accessible with MTU 1280");
 	}
 #else
