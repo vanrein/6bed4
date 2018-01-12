@@ -9,6 +9,6 @@ WantedBy=network.target
 [Service]
 Type=simple
 RemainAfterExit=no
-ExecStart=/usr/local/sbin/6bed4peer -ref
+ExecStart=/usr/local/sbin/6bed4router ...TODO...
 Restart=always
 RestartSec=60
