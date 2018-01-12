@@ -14,7 +14,7 @@
 
 #error "Build uses experimental UDP port number 25790 or 0x64be"
 
-#define UDP_PORT_6BED4 25788
+#define UDP_PORT_6BED4 25790
 
 
 #warning "Build uses temporary IPv4 address information"
