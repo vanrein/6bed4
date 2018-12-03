@@ -334,10 +334,12 @@ syslog (LOG_DEBUG, "Found Interface Index %d for name %s\n", ifreq.ifr_ifindex, 
 	char cmd [512+1];
 	snprintf (cmd, 512, "/sbin/sysctl -q -w net.ipv6.conf.%s.forwarding=0", ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
+		fprintf (stderr, "Failed command: %s\n", cmd);
 		ok = false;
 	}
 	snprintf (cmd, 512, "/sbin/sysctl -q -w net.ipv6.conf.%s.accept_dad=0", ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
+		fprintf (stderr, "Failed command: %s\n", cmd);
 		ok = false;
 	}
 	if (!ok) {
@@ -357,15 +359,18 @@ bool setup_tunnel_address (void) {
 	}
 	snprintf (cmd, 512, "/sbin/ip link set %s up mtu %d", ifreq.ifr_name, MTU);
 	if (ok && system (cmd) != 0) {
+		fprintf (stderr, "Failed command: %s\n", cmd);
 		ok = false;
 	}
 	snprintf (cmd, 512, "/sbin/ip -6 addr add %s/114 dev %s", v6prefix, ifreq.ifr_name);
 	if (ok && system (cmd) != 0) {
+		fprintf (stderr, "Failed command: %s\n", cmd);
 		ok = false;
 	}
 	if (default_route) {
 		snprintf (cmd, 512, "/sbin/ip -6 route add default via fe80:: dev %s metric 1042", ifreq.ifr_name);
 		if (ok && system (cmd) != 0) {
+			fprintf (stderr, "Failed command: %s\n", cmd);
 			ok = false;
 		}
 	}
@@ -766,15 +771,17 @@ syslog (LOG_DEBUG, "Message of %zd bytes from neighbor cache, total is now %zd\n
 			if (resp->hd.nlmsg_type == NLMSG_DONE) {
 				return false;
 			} else if (resp->hd.nlmsg_type != RTM_NEWNEIGH) {
-				syslog (LOG_ERR, "Kernel sent an unexpected nlmsg_type 0x%02x, ending neighbor interpretation\n", resp->hd.nlmsg_type);
+				syslog (LOG_ERR, "Kernel sent an unexpected nlmsg_type 0x%02x, ending neighbor interpretation", resp->hd.nlmsg_type);
 				ok = false;
 			} else if (resp->nd.ndm_ifindex != ifreq.ifr_ifindex) {
+				syslog (LOG_ERR, "Kernel sent an unexpected interface index");
 				ok = false;
 			} else if (resp->nd.ndm_family != AF_INET6) {
 				syslog (LOG_ERR, "Kernel reported unknown neighbor family %d\n", resp->nd.ndm_family);
 				ok = false;
 			} else
 			if (!(resp->nd.ndm_state & (NUD_REACHABLE | NUD_DELAY | NUD_PROBE | NUD_PERMANENT | NUD_STALE))) {
+				syslog (LOG_ERR, "Kernel sent a funnily flagged interface state");
 				ok = false;
 			}
 			struct rtattr *ra = (struct rtattr *) ((char *) &resp + pos + sizeof (struct nlmsghdr) + sizeof (struct ndmsg) + 8);
@@ -1644,59 +1651,68 @@ int process_args (int argc, char *argv []) {
 		case 'r':
 			if (default_route) {
 				fprintf (stderr, "%s: You can only request default route setup once\n", program);
-				exit (1);
+				ok = 0;
+				break;
 			}
 			default_route = true;
 			break;
 		case 'l':
 			if (inet_pton (AF_INET, optarg, &v4bind.sin_addr.s_addr) != 1) {
 				fprintf (stderr, "%s: IPv4 address %s is not valid\n", program, optarg);
-				exit (1);
+				ok = 0;
+				break;
 			}
 			break;
 		case 'p':
 			tmpport = strtoul (optarg, &endarg, 10);
 			if ((*endarg) || (tmpport > 65535)) {
 				fprintf (stderr, "%s: UDP port number %s is not valid\n", program, optarg);
-				exit (1);
+				ok = 0;
+				break;
 			}
 			if (tmpport & 0x0001) {
 				fprintf (stderr, "%s: UDP port number %ld is odd, which is not permitted\n", program, tmpport);
-				exit (1);
+				ok = 0;
+				break;
 			}
 			v4bind.sin_port = htons (tmpport);
 			break;
 		case 'f':
 			if (foreground) {
 				fprintf (stderr, "%s: You can only request foreground operation once\n", program);
-				exit (1);
+				ok = 0;
+				break;
 			}
 			foreground = true;
 			break;
 		case 'e':
 			if (log_to_stderr) {
 				fprintf (stderr, "%s: You can only specify logging to stderr once\n", program);
-				exit (1);
+				ok = 0;
+				break;
 			}
 			log_to_stderr = true;
 			break;
 		case 't':
 			if (v4ttl_mcast != -1) {
 				fprintf (stderr, "%s: You can set the ttl for multicast once\n", program);
-				exit (1);
+				ok = 0;
+				break;
 			}
 			char *zero;
 			long setting = strtol(optarg, &zero, 10);
 			if (*zero || (setting < 0) || (setting > 255)) {
 				fprintf (stderr, "%s: Multicast radius must be a number in the range 0 to 255, inclusive, not %s\n", program, optarg);
-				exit (1);
+				ok = 0;
+				break;
 			}
 			v4ttl_mcast = setting;
 			break;
 		case 'k':
 			if (keepalive_ttl != -1) {
 				fprintf (stderr, "%s: You can only set the keepalive period and TTL once\n", program);
-				exit (1);
+				ok = 0;
+				break;
 			}
 			char *rest;
 			keepalive_period = strtol (optarg, &rest, 10);
@@ -1705,7 +1721,8 @@ int process_args (int argc, char *argv []) {
 				keepalive_ttl = strtol (rest, &rest, 10);
 				if ((keepalive_ttl < 0) || (keepalive_ttl > 255)) {
 					fprintf (stderr, "%s: The keepalive TTL must be in the range 0 to 255, inclusive\n", program);
-					exit (1);
+					ok = 0;
+					break;
 				}
 			} else {
 				keepalive_ttl = 3;
@@ -1747,9 +1764,12 @@ int process_args (int argc, char *argv []) {
 	if (v6sox == -1) {
 		if (geteuid () != 0) {
 			fprintf (stderr, "%s: You should be root, or use -d to specify an accessible tunnel device\n", program);
-			return false;
+			return 0;
 		} else {
-			return setup_tunnel ();
+			ok = setup_tunnel ();
+			if (!ok) {
+				fprintf (stderr, "Failed to setup tunnel\n");
+			}
 		}
 	}
 #else /* ! HAVE_SETUP_TUNNEL */
@@ -1793,8 +1813,14 @@ int main (int argc, char *argv []) {
 #endif
 	//
 	// Parse commandline arguments
+	openlog (program, LOG_NDELAY | LOG_PID | LOG_PERROR, LOG_DAEMON);
 	if (!process_args (argc, argv)) {
+		fprintf (stderr, "Argument processing failed\n");
 		exit (1);
+	}
+	if (!log_to_stderr) {
+		closelog ();
+		openlog (program, LOG_NDELAY | LOG_PID, LOG_DAEMON);
 	}
 	//
 	// Construct the 6bed4 Router's complete link-layer address
@@ -1804,9 +1830,6 @@ int main (int argc, char *argv []) {
 	router_linklocal_address_complete [11] = 0xff;
 	router_linklocal_address_complete [12] = 0xfe;
 	memcpy (router_linklocal_address_complete + 13, &((uint8_t *) &v4peer.sin_addr) [1], 3);
-	//
-	// Open the syslog channel
-	openlog (program, LOG_NDELAY | LOG_PID | ( log_to_stderr? LOG_PERROR: 0), LOG_DAEMON);
 	//
 	// Create memory for the freequeue buffer
 	freequeue = calloc (freequeue_items, sizeof (struct ndqueue));
