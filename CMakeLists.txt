@@ -5,16 +5,16 @@ cmake_policy(SET CMP0053 NEW)
 
 add_definitions (-DLINUX)
 
-add_executable (6bed4client "src/6bed4peer.c")
-add_executable (6bed4server "src/6bed4router.c")
+add_executable (6bed4peer "src/6bed4peer.c")
+add_executable (6bed4router "src/6bed4router.c")
 
 install (PROGRAMS
-	${CMAKE_BINARY_DIR}/6bed4client
-	${CMAKE_BINARY_DIR}/6bed4server
+	${CMAKE_BINARY_DIR}/6bed4peer
+	${CMAKE_BINARY_DIR}/6bed4router
 	DESTINATION sbin)
 install (FILES
-	${CMAKE_SOURCE_DIR}/doc/man/6bed4server.man
-	${CMAKE_SOURCE_DIR}/doc/man/6bed4client.man
+	${CMAKE_SOURCE_DIR}/doc/man/6bed4peer.man
+	${CMAKE_SOURCE_DIR}/doc/man/6bed4router.man
 	DESTINATION ${SHARE_INSTALL_PREFIX}/man/man8)
 
 
