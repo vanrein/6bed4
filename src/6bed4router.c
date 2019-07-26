@@ -813,6 +813,10 @@ void handle_4to6 (void) {
 		//
 		// Plain Unicast
 		if (is_local_override (v4dst6)) {
+			// Accept 6bed4 clients, but not forged IPv6 senders
+			if (!validate_originator (v4src6)) {
+				return;
+			}
 			handle_4to6_plain_unicast (buflen);
 		} else if (validate_originator (v4src6)) {
 			if (v4v6hoplimit-- <= 1) {

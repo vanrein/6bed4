@@ -1,7 +1,7 @@
 project (6bed4 C)
 cmake_minimum_required (VERSION 2.6)
 set (VERSION "0.0.1")
-cmake_policy(SET CMP0053 NEW)
+cmake_policy (SET CMP0053 NEW)
 
 add_definitions (-DLINUX)
 
@@ -34,7 +34,7 @@ install (FILES
 #
 
 if (NOT ND_OPT_DESTINATION_LINKADDR)
-	message ("Stealing an experimental Neighbor Discovery Option Type 253 for Destination Link-Layer Address -- please configure your local override")
+	message ("\nSTEALING an experimental Neighbor Discovery Option Type 253 for Destination Link-Layer Address -- please configure your local override\n")
 	set (ND_OPT_DESTINATION_LINKADDR 253
 		CACHE STRING "Neighbor Discovery Option Type for Destination Link-Layer Address; Configure an unused value until this is standardised"
 	)
@@ -44,7 +44,7 @@ else ()
 endif ()
 
 if (NOT UDP_PORT_6BED4)
-	message ("Stealing an experimental UDP port number 25790 or 0x64be -- please configure your local override")
+	message ("\nSTEALING an experimental UDP port number 25790 or 0x64be -- please configure your local override\n")
 	set (UDP_PORT_6BED4 25790
 		CACHE STRING "Decimal UDP Port to use in this 6bed4 setup; Must be consistent with other settings that mention it in different forms; Configure an unused value until this is standardised"
 	)
@@ -60,7 +60,7 @@ else ()
 endif ()
 
 if (NOT SERVER_6BED4_IPV4_TXT)
-	message ("Stealing an expermental 6bed4 server IP address 145.136.0.1 -- please configure your local override")
+	message ("\nSTEALING an expermental 6bed4 server IP address 145.136.0.1 -- please configure your local override\n")
 	set (SERVER_6BED4_IPV4_TXT "\"145.136.0.1\""
 		CACHE STRING "String representation of decimal IP address of the 6bed4 server to use; Must be consistent with other settings that mention it in different forms"
 	)
@@ -97,9 +97,10 @@ set (SERVER_6BED4_PORT_IPV4_MACSTR "\"\\xbc\\x64\\x91\\x88\\x00\\x01\""
 	CACHE STRING "Binary string representation of the 6bed4 server port number and IPv4 address as a MAC address; Must be equal to SERVER_6BED4_PORT_IPV4_ADDRSTR except for an applied XOR with 0x02 on the first byte"
 )
 
-set (LOCAL_OVERRIDES_PORT0 yes)
+set (INTERFACE_NAME_6BED4 "6bed4"
+	CACHE STRING "The name of the network interface created by 6bed4peer and 6bed4router.  The default name is \"6bed4\" which may conflict with local naming policies for interfaces, or scripts.  It is the clearest name, so it is the default, but you can override it if you need to.")
 
-set (INTERFACE_NAME_6BED4 "6bed4")
+option (LOCAL_OVERRIDES_PORT0 "Addresses PREFIX6BED4:x:x:0:x have no meaning to 6bed4 and will be treated as local addresses of the 6bed4router" ON)
 
 
 configure_file (
@@ -109,6 +110,12 @@ configure_file (
 )
 
 include_directories (${CMAKE_BINARY_DIR}/src)
+
+add_definitions (-DINTERFACE_NAME_6BED4="${INTERFACE_NAME_6BED4}")
+
+if (LOCAL_OVERRIDES_PORT0)
+	add_definitions (-DLOCAL_OVERRIDES_PORT0=yes)
+endif ()
 
 
 #
