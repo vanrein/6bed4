@@ -96,8 +96,9 @@ uint8_t v6listen_linklocal_complete [16] = { 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00,
 
 uint8_t lladdr_6bed4 [6];
 
-struct sockaddr_in  v4name;
 struct sockaddr_in6 v6name;
+struct sockaddr_in  v4name;
+struct sockaddr_in  v4name_xlate;
 
 struct in6_addr v6listen;
 struct in6_addr v6listen_complete;
@@ -972,7 +973,7 @@ fflush (stdout);
 
 /* Option descriptive data structures */
 
-char *short_opt = "l:L:d:hit:u:s:m:";
+char *short_opt = "l:L:d:hit:u:s:m:x:";
 
 struct option long_opt [] = {
 	{ "v4listen", 1, NULL, 'l' },
@@ -984,6 +985,7 @@ struct option long_opt [] = {
 	{ "udp", 1, NULL, 'u' },
 	{ "sctp", 1, NULL, 's' },
 	{ "masqhost", 1, NULL, 'm' },
+	{ "xlate", 1, NULL, 'x' },
 	// { "fallback4", 1 NULL, 'f' },
 	// { "fallback6", 1, NULL, 'F' },
 	{ NULL, 0, NULL, 0 }	/* Array termination */
@@ -1007,11 +1009,12 @@ int process_args (int argc, char *argv []) {
 			}
 			break;
 		case 'l':
-			if (v4sox != -1) {
+			if (v4name.sin_family != 0) {
 				ok = 0;
 				fprintf (stderr, "%s: Only one -l argument is permitted\n", program);
 				break;
 			}
+			v4name.sin_family = AF_INET;
 			v4server = optarg;
 			if (inet_pton (AF_INET, optarg, &v4name.sin_addr) <= 0) {
 				ok = 0;
@@ -1019,17 +1022,25 @@ int process_args (int argc, char *argv []) {
 				break;
 			}
 			memcpy (&v4listen, &v4name.sin_addr, 4);
-			v4sox = socket (AF_INET, SOCK_DGRAM, 0);
-			if (v4sox == -1) {
+			break;
+		case 'x':
+			if (v4name_xlate.sin_family != 0) {
 				ok = 0;
-				fprintf (stderr, "%s: Failed to allocate UDPv4 socket: %s\n", program, strerror (errno));
+				fprintf (stderr, "%s: At most one -x argument is permitted\n", program);
 				break;
 			}
-			if (bind (v4sox, (struct sockaddr *) &v4name, sizeof (v4name)) != 0) {
+			v4name_xlate.sin_family = AF_INET;
+			((uint8_t *) &v4name_xlate.sin_addr.s_addr) [0] = 127;
+			((uint8_t *) &v4name_xlate.sin_addr.s_addr) [1] = 0;
+			((uint8_t *) &v4name_xlate.sin_addr.s_addr) [2] = 0;
+			((uint8_t *) &v4name_xlate.sin_addr.s_addr) [3] = 1;
+			int port = atoi (optarg);
+			if ((port <= 0) || (port > 65535)) {
 				ok = 0;
-				fprintf (stderr, "%s: Failed to bind to UDPv4 %s:%d: %s\n", program, optarg, ntohs (v4name.sin_port), strerror (errno));
+				fprintf (stderr, "%s: Port number for -x out of range\n", program);
 				break;
 			}
+			v4name_xlate.sin_port = htons (port);
 			break;
 		case 'L':
 			if (v6server) {
@@ -1161,7 +1172,7 @@ int process_args (int argc, char *argv []) {
 	}
 	if (help) {
 #ifdef HAVE_SETUP_TUNNEL
-		fprintf (stderr, "Usage: %s [-d /dev/tunX] -l <v4server> -L <v6prefix>/64\n       %s -h\n", program, program);
+		fprintf (stderr, "Usage: %s [-d /dev/tunX] -l <v4server> -L <v6prefix>/64 [-x <port>]\n       %s -h\n", program, program);
 		fprintf (stderr, "\tUse -s|-t|-u to masquerade a port (range) to last -m host or ::1\n");
 #else
 		fprintf (stderr, "Usage: %s -d /dev/tunX -l <v4server> -L <v6prefix>/64\n       %s -h\n", program, program);
@@ -1169,15 +1180,25 @@ int process_args (int argc, char *argv []) {
 #endif
 		return ok;
 	}
-	if (!ok) {
-		return 0;
-	}
-	if (v4sox == -1) {
+	if (v4name.sin_family == 0) {
 		fprintf (stderr, "%s: Use -l to specify an IPv4 address for the tunnel interface\n", program);
 		return 0;
 	}
-	if (!v6server) {
-		fprintf (stderr, "%s: Use -L to specify a /64 prefix on the IPv6 side\n", program);
+	if (v4name_xlate.sin_family == 0) {
+		memcpy (&v4name_xlate, &v4name, sizeof (v4name_xlate));
+	} else {
+		v4server = "127.0.0.1";
+	}
+	v4sox = socket (AF_INET, SOCK_DGRAM, 0);
+	if (v4sox == -1) {
+		fprintf (stderr, "%s: Failed to allocate UDPv4 socket: %s\n", program, strerror (errno));
+		return 0;
+	}
+	if (bind (v4sox, (struct sockaddr *) &v4name_xlate, sizeof (v4name_xlate)) != 0) {
+		fprintf (stderr, "%s: Failed to bind to UDPv4 %s:%d: %s\n", program, v4server, ntohs (v4name_xlate.sin_port), strerror (errno));
+		ok = 0;
+	}
+	if (!ok) {
 		return 0;
 	}
 #ifdef HAVE_SETUP_TUNNEL
@@ -1187,6 +1208,10 @@ int process_args (int argc, char *argv []) {
 			return 0;
 		}
 		ok = setup_tunnel ();
+	}
+	if (!v6server) {
+		fprintf (stderr, "%s: Use -L to specify a /64 prefix on the IPv6 side\n", program);
+		return 0;
 	}
 #else /* ! HAVE_SETUP_TUNNEL */
 	if (v6sox == -1) {
@@ -1204,9 +1229,9 @@ int main (int argc, char *argv []) {
 	//
 	// Initialise
 	program = argv [0];
-	memset (&v4name, 0, sizeof (v4name));
-	memset (&v6name, 0, sizeof (v6name));
-	v4name.sin_family  = AF_INET ;
+	memset (&v6name      , 0, sizeof (v6name      ));
+	memset (&v4name      , 0, sizeof (v4name      ));
+	memset (&v4name_xlate, 0, sizeof (v4name_xlate));
 	v6name.sin6_family = AF_INET6;
 	v4name.sin_port = htons (UDP_PORT_6BED4);   /* 6BED4 standard port */
 	v4tunpi6.flags = 0;

@@ -140,6 +140,18 @@ if none was set yet.  The ICMPv6 messages with a special meaning to 6bed4
 are exempted (Router and Neighbor Solicitation and Advertisement, as well
 as Redirect) but other messages will be masqueraded.
 .TP
+\fB\-x\fR \fIport\fR
+.TP
+\fB\-\-xlate\fR \fIport\fR
+Assume translation from the action \fB\-l\fR address/port combination
+over which UDP traffic with encapsulated IPv6 arrives.  Translation
+can be used as a firewall rule to bypass 6bed4 traffic from a stream
+that is otherwise treated elsewhere, such as via NAT64.  Bypassing is
+done to 127.0.0.1 and the given \fIport\fR, to which the \fB6bed4router\fR
+will bind intead of the normal UDP port.  Note: The \fB\-l\fR option
+must still be set, as it is published in link-local addresses inside
+ICMPv6 messages.
+.TP
 \fB\-h\fR
 .TP
 \fB\-\-help\fR
