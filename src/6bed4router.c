@@ -64,6 +64,12 @@
 
 #define MTU 1280
 
+
+#ifndef MAX_ROUTABLE_PREFIXES
+#define MAX_ROUTABLE_PREFIXES 10
+#endif
+
+
 /*
  * The HAVE_SETUP_TUNNEL variable is used to determine whether absense of
  * the -d option leads to an error, or to an attempt to setup the tunnel.
@@ -103,6 +109,10 @@ struct sockaddr_in  v4name_xlate;
 struct in6_addr v6listen;
 struct in6_addr v6listen_complete;
 struct in_addr  v4listen;
+
+struct in6_addr v6routable_prefix    [MAX_ROUTABLE_PREFIXES];
+uint8_t         v6routable_prefixlen [MAX_ROUTABLE_PREFIXES];
+int             v6routable_prefixcount = 0;
 
 
 struct {
@@ -419,7 +429,7 @@ ntohs (v4name.sin_port),
  * The endlife parameter must be set to obtain zero lifetimes, thus
  * instructing the tunnel client to stop using an invalid prefix.
  */
-size_t icmp6_prefix (size_t optidx, uint8_t endlife) {
+size_t icmp6_prefix_local (size_t optidx, uint8_t endlife) {
 	v4v6icmpdata [optidx++] = 3;	// Type
 	v4v6icmpdata [optidx++] = 4;	// Length
 	v4v6icmpdata [optidx++] = 114;	// This is a /114 prefix
@@ -432,6 +442,31 @@ size_t icmp6_prefix (size_t optidx, uint8_t endlife) {
 	optidx += 4;
 					// Reserved2=0
 	addr_6bed4 ((struct in6_addr *) (v4v6icmpdata + optidx), 0);
+					// Set IPv6 prefix
+	optidx += 16;
+	return optidx;
+}
+
+
+/* Append an extra routed prefix to an ICMPv6 message.  Incoming optidx
+ * and return values signify original and new offset for ICMPv6 options.
+ * The endlife parameter must be set to obtain zero lifetimes, thus
+ * instructing the tunnel client to stop using an invalid prefix.
+ */
+size_t icmp6_prefix_routed (size_t optidx, uint8_t endlife, struct in6_addr *prefix, uint8_t prefix_len) {
+	v4v6icmpdata [optidx++] = 3;	// Type
+	v4v6icmpdata [optidx++] = 4;	// Length
+	v4v6icmpdata [optidx++] = prefix_len;
+					// Prefix Length
+	v4v6icmpdata [optidx++] = 0x00;	// L=0, A=0, Reserved1=0
+	memset (v4v6icmpdata + optidx, endlife? 0x00: 0xff, 8);
+	optidx += 8;
+					// Valid Lifetime: Zero / Infinite
+					// Preferred Lifetime: Zero / Infinite
+	memset (v4v6icmpdata + optidx, 0, 4);
+	optidx += 4;
+					// Reserved2=0
+	memcpy (v4v6icmpdata + optidx, prefix, 16);
 					// Set IPv6 prefix
 	optidx += 16;
 	return optidx;
@@ -563,7 +598,12 @@ void handle_6bed4_router_solicit (void) {
 					// Reachable Time: max
 					// Retrans Timer: max
 	writepos += 2+4+4;
-	writepos = icmp6_prefix (writepos, 0);
+	writepos = icmp6_prefix_local (writepos, 0);
+	for (int i = 0; i < v6routable_prefixcount ; i++) {
+		writepos = icmp6_prefix_routed (writepos, 0,
+				&v6routable_prefix    [i],
+				 v6routable_prefixlen [i]);
+	}
 	icmp6_reply (writepos);
 }
 
@@ -973,11 +1013,12 @@ fflush (stdout);
 
 /* Option descriptive data structures */
 
-char *short_opt = "l:L:d:hit:u:s:m:x:";
+char *short_opt = "l:L:R:d:hit:u:s:m:x:";
 
 struct option long_opt [] = {
 	{ "v4listen", 1, NULL, 'l' },
 	{ "v6prefix", 1, NULL, 'L' },
+	{ "v6route", 1, NULL, 'R' },
 	{ "tundev", 1, NULL, 'd' },
 	{ "help", 0, NULL, 'h' },
 	{ "icmp", 0, NULL, 'i' },
@@ -1054,7 +1095,7 @@ int process_args (int argc, char *argv []) {
 				fprintf (stderr, "%s: The -L argument must be an explicit /64 prefix and not %s\n", program, slash64? slash64: "implied");
 				break;
 			}
-			*slash64 = 0;
+			*slash64 = '\0';
 			v6server = strdup (optarg);
 			*slash64 = '/';
 			v6prefix = optarg;
@@ -1068,6 +1109,27 @@ int process_args (int argc, char *argv []) {
 				fprintf (stderr, "%s: IPv6 prefix contains bits beyond its /64 prefix: %s\n", program, optarg);
 				break;
 			}
+			break;
+		case 'R':
+			if (v6routable_prefixcount >= MAX_ROUTABLE_PREFIXES) {
+				ok = 0;
+				fprintf (stderr, "%s: You cannot provide more than %d prefixes\n", program, MAX_ROUTABLE_PREFIXES);
+				break;
+			}
+			char *prefix = strdup (optarg);
+			char *prefixslash = strchr (prefix, '/');
+			int prefixlen = atoi (prefixslash + 1);
+			*prefixslash = '\0';
+			if ((prefixlen < 16) || (prefixlen > 128)) {
+				ok = 0;
+				fprintf (stderr, "%s: IPv6 route prefix %s must be /16 up to /128\n", program, prefixslash + 1);
+			} else if (inet_pton (AF_INET6, prefix, &v6routable_prefix [v6routable_prefixcount]) <= 0) {
+				ok = 0;
+				fprintf (stderr, "%s: Failed to parse IPv6 route %s", program, optarg);
+			} else {
+				v6routable_prefixlen [v6routable_prefixcount++] = prefixlen;
+			}
+			free (prefix);
 			break;
 		case 'd':
 			if (v6sox != -1) {
@@ -1172,7 +1234,7 @@ int process_args (int argc, char *argv []) {
 	}
 	if (help) {
 #ifdef HAVE_SETUP_TUNNEL
-		fprintf (stderr, "Usage: %s [-d /dev/tunX] -l <v4server> -L <v6prefix>/64 [-x <port>]\n       %s -h\n", program, program);
+		fprintf (stderr, "Usage: %s [-d /dev/tunX] -l <v4server> [-x <port>] -L <v6prefix>/64 [-R <v6route>/n]...\n       %s -h\n", program, program);
 		fprintf (stderr, "\tUse -s|-t|-u to masquerade a port (range) to last -m host or ::1\n");
 #else
 		fprintf (stderr, "Usage: %s -d /dev/tunX -l <v4server> -L <v6prefix>/64\n       %s -h\n", program, program);
