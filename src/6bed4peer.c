@@ -71,6 +71,11 @@ typedef enum {
 #undef HAVE_SETUP_TUNNEL
 
 
+#ifndef MAX_ROUTABLE_PREFIXES
+#define MAX_ROUTABLE_PREFIXES 10
+#endif
+
+
 /* Global variables */
 
 char *program;
@@ -89,6 +94,10 @@ char *v4server = NULL;
 char *v6server = NULL;
 char v6prefix [INET6_ADDRSTRLEN];
 uint8_t v6lladdr [6];
+
+struct in6_addr v6route_addr [MAX_ROUTABLE_PREFIXES];
+uint8_t         v6route_pfix [MAX_ROUTABLE_PREFIXES];
+int             v6route_count = 0;
 
 const uint8_t v6listen_linklocal [16] = { 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 uint8_t v6listen_linklocal_complete [16] = { 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
@@ -369,6 +378,14 @@ bool setup_tunnel_address (void) {
 	}
 	if (default_route) {
 		snprintf (cmd, 512, "/sbin/ip -6 route add default via fe80:: dev %s metric 1042", ifreq.ifr_name);
+		if (ok && system (cmd) != 0) {
+			fprintf (stderr, "Failed command: %s\n", cmd);
+			ok = false;
+		}
+	}
+	for (int i = 0; i < v6route_count; i++) {
+		snprintf (cmd, 512, "/sbin/ip -6 route add %x:%x:%x:%x:%x:%x:%x:%x/%d via fe80:: dev %s metric 1052", ntohs (v6route_addr [i].s6_addr16 [0]), ntohs (v6route_addr [i].s6_addr16 [1]), ntohs (v6route_addr [i].s6_addr16 [2]), ntohs (v6route_addr [i].s6_addr16 [3]), ntohs (v6route_addr [i].s6_addr16 [4]), ntohs (v6route_addr [i].s6_addr16 [5]), ntohs (v6route_addr [i].s6_addr16 [6]), ntohs (v6route_addr [i].s6_addr16 [7]), v6route_pfix [i], ifreq.ifr_name);
+		printf ("SHELL$ %s\n", cmd);
 		if (ok && system (cmd) != 0) {
 			fprintf (stderr, "Failed command: %s\n", cmd);
 			ok = false;
@@ -774,10 +791,11 @@ syslog (LOG_DEBUG, "Message of %zd bytes from neighbor cache, total is now %zd\n
 				syslog (LOG_ERR, "Kernel sent an unexpected nlmsg_type 0x%02x, ending neighbor interpretation", resp->hd.nlmsg_type);
 				ok = false;
 			} else if (resp->nd.ndm_ifindex != ifreq.ifr_ifindex) {
-				syslog (LOG_ERR, "Kernel sent an unexpected interface index");
-				ok = false;
+				// syslog (LOG_DEBUG, "Kernel sent interface index %d (looking for %d)", resp->nd.ndm_ifindex, ifreq.ifr_ifindex);
+				pos += resp->hd.nlmsg_len;
+				continue; //ACCEPT// ok = false;
 			} else if (resp->nd.ndm_family != AF_INET6) {
-				syslog (LOG_ERR, "Kernel reported unknown neighbor family %d\n", resp->nd.ndm_family);
+				syslog (LOG_ERR, "Kernel reported unknown neighbor family %d", resp->nd.ndm_family);
 				ok = false;
 			} else
 			if (!(resp->nd.ndm_state & (NUD_REACHABLE | NUD_DELAY | NUD_PROBE | NUD_PERMANENT | NUD_STALE))) {
@@ -919,8 +937,20 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 				return;   /* bad length field */
 			} else if (rdofs + (v4v6icmpdata [rdofs + 1] << 3) > ntohs (v4v6plen) + 4) {
 				return;   /* out of packet length */
-			} else if (v4v6icmpdata [rdofs + 3] & 0xc0 != 0xc0) {
-				/* no on-link autoconfig prefix */
+			} else if ((v4v6icmpdata [rdofs + 3] & 0xc0) != 0xc0) {
+				/* no on-link autoconfig, but routable prefix */
+				printf ("Received a routable prefix %x%02x:%x%02x:%x%02x:%x%02x:.../%d\n", v4v6icmpdata [rdofs+16], v4v6icmpdata [rdofs+17], v4v6icmpdata [rdofs+18], v4v6icmpdata [rdofs+19], v4v6icmpdata [rdofs+20], v4v6icmpdata [rdofs+21], v4v6icmpdata [rdofs+22], v4v6icmpdata [rdofs+22], v4v6icmpdata [rdofs+2]);
+				if ((v6route_count < MAX_ROUTABLE_PREFIXES) &&
+						(v4v6icmpdata [rdofs + 2] <= 128) &&
+						(v4v6icmpdata [rdofs + 2] >= 16)) {
+					memcpy (
+						v6route_addr [v6route_count].s6_addr,
+						&v4v6icmpdata [rdofs+16],
+						16);
+					v6route_pfix [v6route_count] =
+						v4v6icmpdata [rdofs + 2];
+					v6route_count++;
+				}
 			} else if (v4v6icmpdata [rdofs + 2] != PREFIX_SIZE) {
 				/* not a /114 prefix, so no 6bed4 offer */
 				return;

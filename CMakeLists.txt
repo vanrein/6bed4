@@ -5,6 +5,14 @@ cmake_policy (SET CMP0053 NEW)
 
 add_definitions (-DLINUX)
 
+option (DEBUG
+	"Switch on output and flags that aid developpers in debugging"
+	OFF)
+
+if (DEBUG)
+	add_compile_options (-DDEBUG -ggdb3 -O0 -fstack-protector)
+endif()
+
 add_executable (6bed4peer "src/6bed4peer.c")
 add_executable (6bed4router "src/6bed4router.c")
 
