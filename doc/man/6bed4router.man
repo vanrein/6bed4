@@ -15,7 +15,7 @@
 6bed4router \- server-side daemon for 6bed4 service
 .SH SYNOPSYS
 .B 6bed4router
-[\fB\-d\fR \fI/dev/tunX\fR] \fB\-l\fR \fIv4addr\fR \fB\-L\fR \fIv6prefix/64\fR [\fB\-m\fR/\fB\-i\fR/\fBs\fR/\fBt\fR/\fBu\fR \fI...\fR]
+[\fB\-d\fR \fI/dev/tunX\fR] \fB\-l\fR \fIv4addr\fR \fB\-L\fR \fIv6prefix/64\fR [\fB\-m\fR/\fB\-i\fR/\fBs\fR/\fBt\fR/\fBu\fR \fI...\fR] [\fB-x\fR \fIport\fR] [\fB-R\fR fv6prefix/len\fR]...
 .PP
 .B 6bed4router
 [\fB\-h\fR]
@@ -103,6 +103,33 @@ If no \fB\-d\fR option is given, a tunnel will be created for the time that
 \fB6bed4router\fR is running, and the \fIv6prefix/64\fR is used as a router address
 on that interface.  Routing table entries will not be setup by \fB6bed4router\fR,
 nor will the general ablity to forward IPv6 traffic.
+.TP
+\fB\-R\fR \fIv6prefix/len\fR
+.TP
+\fB\-\-v6route\fR \fIv6prefix/len\fR
+Supply additional routing information.  Unlike the \fB-L\fR option
+which indicates the prefix to the 6bed4 network, this option does
+not support prefix construction or polling for neighbour presence.
+It is solely meant to enrich routing tables with prefixes that may
+pass through the 6bed4 interface.  Prefix lengths are more flexible
+than \fB-L\fR can be.
+.IP
+Multiple of these prefixes may be supplied, and each of them will
+be routed to the \fB6bed4router\fR backend network.  Such traffic
+will use the \fB-L\fR prefix as source addressing and the \fB-R\fR
+prefix as target addressing.  Return traffic will reverse this, and
+that is why a central concern is that the networks provided with
+the \fB-R\fR option must support routing back to the \fB6bed4router\fR
+through its prefix.  Note that not all prefixes supported with
+\fB-L\fR are globally routable, so this is a bit of a concern.
+.IP
+A good use of this pattern is to use a locally routable prefix based on
+\fB-L\fR \fIfc64:bed::/64\fR to reach a server's publicly routable
+prefix set with \fB-R\fR.  The server can distinguish the traffic
+from the \fB6bed4router\fR on the basis of the source address, and
+will be able to direct reply traffic to it; at the same time, native
+IPv6 clients can use their own prefixes and be routed through a
+primary interface.
 .TP
 \fB\-m\fR \fIv6addr\fR
 .TP
