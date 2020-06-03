@@ -301,3 +301,22 @@ link to other `fd00::/8` local addresses, and route them up to their
 fallback server if the complete /64 differs from another that they might
 like to contact.
 
+
+Overview of Prefix Options
+--------------------------
+
+Not all prefixes are equally suited for routing; the interpretation of `6bed4` may go farther than the rest of the `world`, and varies between the `.top` and `.bot` halves of the address.
+
+```
+ Prefix in -L    | world.top | world.bot | 6bed4.top | 6bed4.bot
+-----------------+-----------+-----------+-----------+-----------
+ TBD1::/32       |    yes    |    yes    |    yes    |    yes
+ fc64:X::/16,32  |   maybe   |   maybe   |    yes    |    yes
+ fdX:X:X:X::/64  |   maybe   |   maybe   |     no    |    yes
+ native/48,/64   |     no    |     no    |     no    |   maybe
+ 2002::/16       |   vague   |     no    |   vague   |   maybe
+```
+
+In the table above, `yes` indicates that the IPv4 address and UDP port can be found from the `.top` or `.bot` half of the address; `no` indicates that this is not possible; `maybe` indicates that such a thing may be configured specifically as a local address policy; `vague` indicates that confusion and inconsistencies are likely even under a local policy is defined, and these forms are therefore best avoided.
+
+For `-R` prefixes, the situation is more relaxed.  As long as the hosts on these networks know how to route back to a `6bed4router` at its `-L` prefix, there should be no problem contacting such networks.  Note how the `-R` ranges can open up with `world` routable forms in the `-L` prefix.

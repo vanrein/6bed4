@@ -93,9 +93,11 @@ char *program;
 int v4sox = -1;
 int v6sox = -1;
 
+int netid = -1;
+
 char *v4server = NULL;
 char *v6server = NULL;
-char *v6prefix = NULL;
+char v6prefix [INET6_ADDRSTRLEN+1];
 
 const uint8_t v6listen_linklocal [16] = { 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 uint8_t v6listen_linklocal_complete [16] = { 0xfe, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
@@ -106,6 +108,7 @@ struct sockaddr_in6 v6name;
 struct sockaddr_in  v4name;
 struct sockaddr_in  v4name_xlate;
 
+uint8_t         v6listen_len = 0;
 struct in6_addr v6listen;
 struct in6_addr v6listen_complete;
 struct in_addr  v4listen;
@@ -274,45 +277,45 @@ uint16_t icmp_portpairs [3] = { 1, 1, 0 };
 #ifdef LINUX
 #define HAVE_SETUP_TUNNEL
 /* Implement the setup_tunnel() command for Linux.
- * Return 1 on success, 0 on failure.
+ * Return true on success, false on failure.
  */
-int setup_tunnel (void) {
+bool setup_tunnel (void) {
 	v6sox = open ("/dev/net/tun", O_RDWR);
 	if (v6sox == -1) {
 		fprintf (stderr, "%s: Failed to access tunnel driver on /dev/net/tun: %s\n", program, strerror (errno));
-		return 0;
+		return false;
 	}
-	int ok = 1;
+	char *errcmd = NULL;
 	struct ifreq ifreq;
 	memset (&ifreq, 0, sizeof (ifreq));
 	strncpy (ifreq.ifr_name, INTERFACE_NAME_6BED4, IFNAMSIZ);
 	ifreq.ifr_flags = IFF_TUN;
-	if (ok && (ioctl (v6sox, TUNSETIFF, (void *) &ifreq) == -1)) {
-		ok = 0;
+	if ((errcmd == NULL) && (ioctl (v6sox, TUNSETIFF, (void *) &ifreq) == -1)) {
+		errcmd = "ioctl (v6sox, TUNSETIFF, ifreq_6bed4)";
 	}
 	ifreq.ifr_name [IFNAMSIZ] = 0;
 	char cmd [512+1];
 	snprintf (cmd, 512, "/sbin/ip -6 addr flush dev %s", ifreq.ifr_name);
-	if (ok && system (cmd) != 0) {
-		ok = 0;
+	if ((errcmd == NULL) && system (cmd) != 0) {
+		errcmd = cmd;
 	}
 	snprintf (cmd, 512, "/sbin/ip addr add fe80::0 dev %s scope link", ifreq.ifr_name);
-	if (ok && system (cmd) != 0) {
-		ok = 0;
+	if ((errcmd == NULL) && system (cmd) != 0) {
+		errcmd = cmd;
 	}
 	snprintf (cmd, 512, "/sbin/ip -6 addr add %s dev %s", v6prefix, ifreq.ifr_name);
-	if (ok && system (cmd) != 0) {
-		ok = 0;
+	if ((errcmd == NULL) && system (cmd) != 0) {
+		errcmd = cmd;
 	}
 	snprintf (cmd, 512, "/sbin/ip link set %s up mtu 1280", ifreq.ifr_name);
-	if (ok && system (cmd) != 0) {
-		ok = 0;
+	if ((errcmd == NULL) && system (cmd) != 0) {
+		errcmd = cmd;
 	}
-	if (!ok) {
+	if (errcmd != NULL) {
 		close (v6sox);	/* This removes the tunnel interface */
-		fprintf (stderr, "Failed to setup tunnel \"%s\"\n", INTERFACE_NAME_6BED4);
+		fprintf (stderr, "Failed to setup tunnel \"%s\"\nCommand: %s\n", INTERFACE_NAME_6BED4, errcmd);
 	}
-	return ok;
+	return (errcmd == NULL);
 }
 #endif /* LINUX */
 
@@ -1011,14 +1014,140 @@ fflush (stdout);
 }
 
 
+/* Parse an IPv6 prefix/length string, and apply (min,max) constraints
+ * the the length.
+ *
+ * In case of error, return a fixed string with a short explanation.
+ * Otherwise, return NULL and set the output variables.  When an error
+ * is encountered, the outputs may already be partially filled.
+ */
+char *parse_v6prefix (char *arg, uint8_t minlen, uint8_t maxlen,
+				struct in6_addr *out_addr,
+				uint8_t *out_prefixlen) {
+	if (arg == NULL) {
+		return "No prefix provided";
+	}
+	char argcp [strlen (arg) + 1];
+	strcpy (argcp, arg);
+	char *slash = strchr (argcp, '/');
+	if (slash == NULL) {
+		return "Prefix without length";
+	}
+	char *end = NULL;
+	unsigned long pflen = strtoul (slash + 1, &end, 10);
+	if (*end != '\0') {
+		return "Garbage after prefix/length";
+	}
+	if (pflen > 128) {
+		return "Invalid prefix length";
+	}
+	if ((pflen < minlen) || (pflen > maxlen)) {
+		return "Unacceptable prefix length";
+	}
+	*slash = '\0';
+	if (inet_pton (AF_INET6, argcp, out_addr) != 1) {
+		return "Invalid IPv6 prefix";
+	}
+	*out_prefixlen = pflen;
+	static const uint8_t pflen_masks [8] = {
+		0xff, 0x7f, 0x3f, 0x1f, 0x0f, 0x07, 0x03, 0x01
+	};
+	while (pflen < 128) {
+		if (0x00 != (out_addr->s6_addr [pflen >> 3]
+				& pflen_masks [pflen & 0x07])) {
+			return "Non-zero bits beyond prefix length";
+		}
+		pflen += 8 - (pflen & 0x07);
+	}
+	return NULL;
+}
+
+
+/* Expand the -L or --v6prefix to 64 bits, depending on prefix:
+ *
+ * ::/0 is treated as if no -L was supplied.
+ * any /64 is left unmodified.
+ * 2002::/16 prints a discouraging string but it treated like any /16.
+ * any /16 expands with <netid> to /32 and than with the IPv4 to form -l.
+ * TBD1::/32 expands with the IPv4 from -l.
+ * native/48 expands with the <netid>.
+ * fd00::/8..63 is expanded with deterministic random bits.
+ *
+ * Called with the old prefixlen; set to 0 when the -L was not
+ * provided, in which case the current behaviour is as for fc64::/16
+ * but beware, later versions may process it like TBD1::/32 instead.
+ *
+ * The new prefixlen is not set, but will be 64 when this function
+ * returns NULL to indicate success.  On error, a short descriptive
+ * string is returned.
+ *
+ * Deliver the resulting prefix string, without length, in the output
+ * parameter out_prefixaddrstr, which should be INET6_ADDRSTRLEN+1
+ * characters long.
+ */
+char *expand_v6prefix (struct in6_addr *prefix, uint8_t prefixlen,
+				const struct in_addr *v4listen, int opt_netid,
+				char out_prefixaddrstr [INET6_ADDRSTRLEN+1]) {
+	//
+	// Recognise the default case
+	if (prefixlen <= 0) {
+		fprintf (stderr, "WARNING: The -L default fc64::/16 may change later\n");
+		prefix->s6_addr16 [0] = htons (0xfc64);
+		prefixlen = 16;
+	}
+	//
+	// Warn about 2002::/16
+	if ((prefixlen >= 16) && (prefix->s6_addr16 [0] == htons (0x2002))) {
+		fprintf (stderr, "WARNING: Use of -L 2002::/16 is confusing");
+	}
+	//
+	// Special cases fd00::/8..63 are filled to 64 bits
+	if ((prefixlen >= 8) && (prefix->s6_addr [0] == 0xfd) && (prefixlen < 64)) {
+		//TODO// Implement this case, rather than asking the user
+		//TODO// Expand with predictable pseudo-random bits
+		return "Currently need full fdXX:XXXX:XXXX:XXXX::/64";
+	}
+	//
+	// Cases that add <netid> on bits 16..31
+	if (prefixlen == 16) {
+		prefix->s6_addr16 [1] = (netid < 0) ? htons (0xbed) : htons (netid);
+		prefixlen = 32;
+	}
+	//
+	// Cases that add <ipv4addr> on bits 32..63
+	if (prefixlen == 32) {
+		memcpy (&prefix->s6_addr [4], v4listen, 4);
+		prefixlen = 64;
+	}
+	//
+	// Cases that add <netid> on bits 48..63
+	if (prefixlen == 48) {
+		prefix->s6_addr16 [3] = (netid < 0) ? htons (0xbed) : htons (netid);
+		prefixlen = 64;
+	}
+	//
+	// If we end with prefix != 64, we have failed
+	if (prefixlen != 64) {
+		return "Unable to expand the -L prefix";
+	}
+	//
+	// Write the prefix address string and return success
+	if (inet_ntop (AF_INET6, prefix, out_prefixaddrstr, INET6_ADDRSTRLEN+1) == NULL) {
+		return strerror (errno);
+	}
+	return NULL;
+}
+		
+
 /* Option descriptive data structures */
 
-char *short_opt = "l:L:R:d:hit:u:s:m:x:";
+char *short_opt = "l:L:R:n:d:hit:u:s:m:x:";
 
 struct option long_opt [] = {
 	{ "v4listen", 1, NULL, 'l' },
 	{ "v6prefix", 1, NULL, 'L' },
 	{ "v6route", 1, NULL, 'R' },
+	{ "netid", 1, NULL, 'n' },
 	{ "tundev", 1, NULL, 'd' },
 	{ "help", 0, NULL, 'h' },
 	{ "icmp", 0, NULL, 'i' },
@@ -1033,12 +1162,13 @@ struct option long_opt [] = {
 };
 
 /* Parse commandline arguments (and start to process them).
- * Return 1 on success, 0 on failure.
+ * Return true on success, false on failure.
  */
-int process_args (int argc, char *argv []) {
-	int ok = 1;
+bool process_args (int argc, char *argv []) {
+	bool ok = true;
 	int help = (argc == 1);
 	int done = 0;
+	char *errstr;
 	int opt;
 	while (!done) {
 		switch (opt = getopt_long (argc, argv, short_opt, long_opt, NULL)) {
@@ -1046,19 +1176,19 @@ int process_args (int argc, char *argv []) {
 			done = 1;
 			if (optind != argc) {
 				fprintf (stderr, "%s: Extra arguments not permitted: %s...\n", program, argv [optind]);
-				ok = 0;
+				ok = false;
 			}
 			break;
 		case 'l':
 			if (v4name.sin_family != 0) {
-				ok = 0;
+				ok = false;
 				fprintf (stderr, "%s: Only one -l argument is permitted\n", program);
 				break;
 			}
 			v4name.sin_family = AF_INET;
 			v4server = optarg;
 			if (inet_pton (AF_INET, optarg, &v4name.sin_addr) <= 0) {
-				ok = 0;
+				ok = false;
 				fprintf (stderr, "%s: Failed to parse IPv4 address %s\n", program, optarg);
 				break;
 			}
@@ -1066,7 +1196,7 @@ int process_args (int argc, char *argv []) {
 			break;
 		case 'x':
 			if (v4name_xlate.sin_family != 0) {
-				ok = 0;
+				ok = false;
 				fprintf (stderr, "%s: At most one -x argument is permitted\n", program);
 				break;
 			}
@@ -1077,7 +1207,7 @@ int process_args (int argc, char *argv []) {
 			((uint8_t *) &v4name_xlate.sin_addr.s_addr) [3] = 1;
 			int port = atoi (optarg);
 			if ((port <= 0) || (port > 65535)) {
-				ok = 0;
+				ok = false;
 				fprintf (stderr, "%s: Port number for -x out of range\n", program);
 				break;
 			}
@@ -1085,61 +1215,60 @@ int process_args (int argc, char *argv []) {
 			break;
 		case 'L':
 			if (v6server) {
-				ok = 0;
+				ok = false;
 				fprintf (stderr, "%s: Only one -L argument is permitted\n", program);
 				break;
 			}
-			char *slash64 = strchr (optarg, '/');
-			if (!slash64 || strcmp (slash64, "/64") != 0) {
-				ok = 0;
-				fprintf (stderr, "%s: The -L argument must be an explicit /64 prefix and not %s\n", program, slash64? slash64: "implied");
-				break;
-			}
-			*slash64 = '\0';
-			v6server = strdup (optarg);
-			*slash64 = '/';
-			v6prefix = optarg;
-			if (!v6server || (inet_pton (AF_INET6, v6server, &v6listen) <= 0)) {
-				ok = 0;
-				fprintf (stderr, "%s: Failed to parse IPv6 prefix %s\n", program, optarg);
-				break;
-			}
-			if (v6listen.s6_addr32 [2] || v6listen.s6_addr32 [3]) {
-				ok = 0;
-				fprintf (stderr, "%s: IPv6 prefix contains bits beyond its /64 prefix: %s\n", program, optarg);
+			v6server = optarg;
+			errstr = parse_v6prefix (optarg, 0, 64,
+				&v6listen, 
+				&v6listen_len);
+			if (errstr != NULL) {
+				ok = false;
+				fprintf (stderr, "%s: %s in -L %s\n",
+						program, errstr, optarg);
 				break;
 			}
 			break;
 		case 'R':
 			if (v6routable_prefixcount >= MAX_ROUTABLE_PREFIXES) {
-				ok = 0;
+				ok = false;
 				fprintf (stderr, "%s: You cannot provide more than %d prefixes\n", program, MAX_ROUTABLE_PREFIXES);
 				break;
 			}
-			char *prefix = strdup (optarg);
-			char *prefixslash = strchr (prefix, '/');
-			int prefixlen = atoi (prefixslash + 1);
-			*prefixslash = '\0';
-			if ((prefixlen < 16) || (prefixlen > 128)) {
-				ok = 0;
-				fprintf (stderr, "%s: IPv6 route prefix %s must be /16 up to /128\n", program, prefixslash + 1);
-			} else if (inet_pton (AF_INET6, prefix, &v6routable_prefix [v6routable_prefixcount]) <= 0) {
-				ok = 0;
-				fprintf (stderr, "%s: Failed to parse IPv6 route %s", program, optarg);
-			} else {
-				v6routable_prefixlen [v6routable_prefixcount++] = prefixlen;
+			errstr = parse_v6prefix (optarg, 16, 128,
+				&v6routable_prefix    [v6routable_prefixcount],
+				&v6routable_prefixlen [v6routable_prefixcount]);
+			if (errstr != NULL) {
+				ok = false;
+				fprintf (stderr, "%s: %s in -R %s\n",
+						program, errstr, optarg);
 			}
-			free (prefix);
+			v6routable_prefixcount++;
+			break;
+		case 'n':
+			if (netid != -1) {
+				ok = false;
+				fprintf (stderr, "You can only specify one network identifier\n");
+				break;
+			}
+			char *endptr;
+			unsigned long new_netid = strtoul (optarg, &endptr, 16);
+			if ((*endptr != '\0') || (new_netid > 65535)) {
+				ok = false;
+				fprintf (stderr, "Network identifers are 16-bit numbers in hexadecimal notation\n");
+			}
+			netid = (int) new_netid;
 			break;
 		case 'd':
 			if (v6sox != -1) {
-				ok = 0;
+				ok = false;
 				fprintf (stderr, "%s: Multiple -d arguments are not permitted\n", program);
 				break;
 			}
 			v6sox = open (optarg, O_RDWR);
 			if (v6sox == -1) {
-				ok = 0;
+				ok = false;
 				fprintf (stderr, "%s: Failed to open tunnel device %s: %s\n", program, optarg, strerror (errno));
 				break;
 			}
@@ -1159,7 +1288,7 @@ int process_args (int argc, char *argv []) {
 			if (opt == 'i') {
 				if (icmp_num_portpairs > 0) {
 					fprintf (stderr, "%s: Only one ICMP masquerading setting is possible\n", program);
-					ok = 0;
+					ok = false;
 					break;
 				}
 				icmp_portpairs [2] = num_masqhost - 1;
@@ -1182,17 +1311,17 @@ int process_args (int argc, char *argv []) {
 				}
 				if (errno || *optarg) {
 					fprintf (stderr, "%s: Failed to parse port or port:port\n", program);
-					ok = 0;
+					ok = false;
 					break;
 				}
 				if ((fromport < 1) || (fromport > toport) || (toport > 65535)) {
 					fprintf (stderr, "%s: Invalid port or port range\n", program);
-					ok = 0;
+					ok = false;
 					break;
 				}
 				if (++num_masqportpairs [opt-'s'] >= MAXNUM_PORTPAIRS) {
 					fprintf (stderr, "%s: You cannot define so many ports / port pairs\n", program);
-					ok = 0;
+					ok = false;
 					break;
 				}
 				portpairs = &masqportpairs [opt-'s'][3*(num_masqportpairs [opt-'s']-1)];
@@ -1205,12 +1334,12 @@ int process_args (int argc, char *argv []) {
 			// Masqueraded host for TCP, UDP, SCTP (default is ::1)
 			if (++num_masqhost >= MAXNUM_MASQHOST) {
 				fprintf (stderr, "%s: No more than %d masquering hosts can be specified\n", program, MAXNUM_MASQHOST);
-				ok = 0;
+				ok = false;
 				break;
 			}
 			if (inet_pton (AF_INET6, optarg, masqhost [num_masqhost]) != 1) {
 				fprintf (stderr, "%s: Unsupported masquerading host \"%s\"\n", program, optarg);
-				ok = 0;
+				ok = false;
 				break;
 			}
 			num_masqhost++;
@@ -1218,11 +1347,11 @@ int process_args (int argc, char *argv []) {
 		// case 'f':
 		// case 'F':
 		// 	// Fallback addresses for IPv4, IPv6
-		// 	ok = 0;	//TODO:IMPLEMENT//
+		// 	ok = false;	//TODO:IMPLEMENT//
 		// 	help = 1;
 		// 	break;
 		default:
-			ok = 0;
+			ok = false;
 			/* continue into 'h' to produce usage information */
 		case 'h':
 			help = 1;
@@ -1234,7 +1363,7 @@ int process_args (int argc, char *argv []) {
 	}
 	if (help) {
 #ifdef HAVE_SETUP_TUNNEL
-		fprintf (stderr, "Usage: %s [-d /dev/tunX] -l <v4server> [-x <port>] -L <v6prefix>/64 [-R <v6route>/n]...\n       %s -h\n", program, program);
+		fprintf (stderr, "Usage: %s [-d /dev/tunX] -l <v4server> [-x <port>] [-n <netid>] [-L <v6prefix/n>] [-R <v6route/n>]...\n       %s -h\n", program, program);
 		fprintf (stderr, "\tUse -s|-t|-u to masquerade a port (range) to last -m host or ::1\n");
 #else
 		fprintf (stderr, "Usage: %s -d /dev/tunX -l <v4server> -L <v6prefix>/64\n       %s -h\n", program, program);
@@ -1244,7 +1373,7 @@ int process_args (int argc, char *argv []) {
 	}
 	if (v4name.sin_family == 0) {
 		fprintf (stderr, "%s: Use -l to specify an IPv4 address for the tunnel interface\n", program);
-		return 0;
+		return false;
 	}
 	if (v4name_xlate.sin_family == 0) {
 		memcpy (&v4name_xlate, &v4name, sizeof (v4name_xlate));
@@ -1254,31 +1383,36 @@ int process_args (int argc, char *argv []) {
 	v4sox = socket (AF_INET, SOCK_DGRAM, 0);
 	if (v4sox == -1) {
 		fprintf (stderr, "%s: Failed to allocate UDPv4 socket: %s\n", program, strerror (errno));
-		return 0;
+		return false;
 	}
 	if (bind (v4sox, (struct sockaddr *) &v4name_xlate, sizeof (v4name_xlate)) != 0) {
 		fprintf (stderr, "%s: Failed to bind to UDPv4 %s:%d: %s\n", program, v4server, ntohs (v4name_xlate.sin_port), strerror (errno));
-		ok = 0;
+		ok = false;
 	}
 	if (!ok) {
-		return 0;
+		return false;
 	}
+	errstr = expand_v6prefix (
+			&v6listen, v6listen_len,
+			&v4listen, netid,
+			v6prefix);
+	if (errstr) {
+		fprintf (stderr, "%s: %s\n", program, errstr);
+		return false;
+	}
+	v6listen_len = 64;
 #ifdef HAVE_SETUP_TUNNEL
 	if (v6sox == -1) {
 		if (geteuid () != 0) {
 			fprintf (stderr, "%s: You should be root, or use -d to specify an accessible tunnel device\n", program);
-			return 0;
+			return false;
 		}
 		ok = setup_tunnel ();
-	}
-	if (!v6server) {
-		fprintf (stderr, "%s: Use -L to specify a /64 prefix on the IPv6 side\n", program);
-		return 0;
 	}
 #else /* ! HAVE_SETUP_TUNNEL */
 	if (v6sox == -1) {
 		fprintf (stderr, "%s: You must specify a tunnel device with -d that is accessible to you\n", program);
-		return 0;
+		return false;
 	}
 #endif /* HAVE_SETUP_TUNNEL */
 	return ok;

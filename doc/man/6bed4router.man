@@ -15,7 +15,7 @@
 6bed4router \- server-side daemon for 6bed4 service
 .SH SYNOPSYS
 .B 6bed4router
-[\fB\-d\fR \fI/dev/tunX\fR] \fB\-l\fR \fIv4addr\fR \fB\-L\fR \fIv6prefix/64\fR [\fB\-m\fR/\fB\-i\fR/\fBs\fR/\fBt\fR/\fBu\fR \fI...\fR] [\fB-x\fR \fIport\fR] [\fB-R\fR fv6prefix/len\fR]...
+[\fB\-d\fR \fI/dev/tunX\fR] \fB\-l\fR \fIv4addr\fR [\fB-n\fR \fInetid\fR] [\fB\-L\fR \fIv6prefix/len\fR] [\fB-x\fR \fIport\fR] [\fB-R\fR fv6prefix/len\fR...] [\fB\-m\fR/\fB\-i\fR/\fBs\fR/\fBt\fR/\fBu\fR \fI...\fR]
 .PP
 .B 6bed4router
 [\fB\-h\fR]
@@ -91,18 +91,46 @@ the tunnel device by the user that runs \fB6bed4router\fR.  Optional on Linux.
 Bind to the given local IPv4 address and listen for incoming IPv6
 neighbour discovery packages as well as general IPv6 traffic.  Required.
 .TP
-\fB\-L\fR \fIv6prefix/64\fR
+\fB\-n\fR \fInetid\fR
 .TP
-\fB\-\-v6prefix\fR \fIv6prefix/64\fR
+\fB\-\-netid\fR \fInetid\fR
+The network identifier is a 16-bit number in hexadecimal notation
+(with no prefixes like 0x) that may be used to complete some prefixes
+in the \fB-L\fR option to 64 bits.  If it is provided but not used,
+an error is given.  If it is used but not provided, the default value
+\fIbed\fR is used.
+.TP
+\fB\-L\fR \fIv6prefix/len\fR
+.TP
+\fB\-\-v6prefix\fR \fIv6prefix/len\fR
 Bind to the given IPv6 address range through a tunnel device, and
 forward incoming IPv6 messages to IPv4-based UDP tunnel endpoints.
 See ADDRESS FORMAT below for an explanation of the lower half of
-the IPv6 addresses.  Required.
+the IPv6 addresses.
+.IP
+When this option is not provided, a default is used.  Given the presence
+of at least one `-R` option, the default form `fc64::/16` is used.
+Future versions may instead default to `TBD1::/32`, possibly depending
+on other options.
+.IP
+When \fIlen\fR is not 64, it must be 16, 32 or 48 and will be rewritten
+to a /64 form by the \fB6bed4router\fR.  Specifically, the form \fIfc64::/16\fR
+is extended to \fIfc64:<netid>:<ipv4addr>::/64\fR using the network identifier
+from the \fB-n\fR option and the IPv4 address to which the
+\fB6bed4router\fR binds its UDP port.  The form \fITBD1::/32\fR is extended
+to \fITBD1:<ipv4addr>::/64\fR with that same IPv4 address.  The form
+\fIfd00::/len\fR can use any \fI/len\fR values from 8 to 64; random bits
+are added to reach a 64 bit prefix length; the generation of these bits
+is repeatable, so the bits survive a restart.  The forms that are defined
+for general unicaast may have a \fI/48\fR prefix length, in which case the
+completion to a 64 bit prefix is reached by adding the same \fI<netid>\fR
+as mentioned before.
 .IP
 If no \fB\-d\fR option is given, a tunnel will be created for the time that
-\fB6bed4router\fR is running, and the \fIv6prefix/64\fR is used as a router address
-on that interface.  Routing table entries will not be setup by \fB6bed4router\fR,
-nor will the general ablity to forward IPv6 traffic.
+\fB6bed4router\fR is running, and the (extended) \fIv6prefix/64\fR is used
+as a router address on that interface.  Routing table entries will not be
+setup by \fB6bed4router\fR, nor will the general ablity to forward IPv6
+traffic.
 .TP
 \fB\-R\fR \fIv6prefix/len\fR
 .TP
@@ -124,11 +152,11 @@ through its prefix.  Note that not all prefixes supported with
 \fB-L\fR are globally routable, so this is a bit of a concern.
 .IP
 A good use of this pattern is to use a locally routable prefix based on
-\fB-L\fR \fIfc64:bed::/64\fR to reach a server's publicly routable
-prefix set with \fB-R\fR.  The server can distinguish the traffic
-from the \fB6bed4router\fR on the basis of the source address, and
-will be able to direct reply traffic to it; at the same time, native
-IPv6 clients can use their own prefixes and be routed through a
+\fB-L\fR \fIfc64:bed:<ipv4addr>::/64\fR to reach a server's publicly
+routable prefix set with \fB-R\fR.  The server can distinguish the
+traffic from the \fB6bed4router\fR on the basis of the source address,
+and will be able to direct reply traffic to it; at the same time,
+native IPv6 clients can use their own prefixes and be routed through a
 primary interface.
 .TP
 \fB\-m\fR \fIv6addr\fR
