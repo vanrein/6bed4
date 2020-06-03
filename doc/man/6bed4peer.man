@@ -15,7 +15,7 @@
 6bed4client \- client-side daemon for instant-on IPv6 service
 .SH SYNOPSYS
 .B 6bed4client
-[\fB\-d\fR \fI/dev/tunX\fR] [\fB\-r\fR] [\fB\-f\fR] [\fB\-l\fR \fIv4addr\fR] [\fB\-p\fR \fIport\fR] [\fB\-t\fR \fIhops\fR] [\fB-s \fIv4addr\fR]
+[\fB\-d\fR \fI/dev/tunX\fR] [\fB\-r\fR] [\fB\-f\fR] [\fB\-l\fR \fIv4addr\fR] [\fB\-p\fR \fIport\fR] [\fB\-t\fR \fIhops\fR] [\fB-s\fR \fIv4addr\fR] [\fB-x\R \fIscript\fR]
 .PP
 .B 6bed4client
 [\fB\-h\fR]
@@ -168,7 +168,23 @@ indicates that no multicast should be used.  Values above 1 run the risk
 of deregulating the performance of 6bed4 on an unsuitable network, please
 read \fBLOCAL NETWORKING\fR below for details.
 .TP
-\fB\-u\fI
+\fB-x\fR \fIextension.script\fR
+.TP
+\fB\-\-extension\-hook\fR \fIextension.script\fR
+Sets a script that will be invoked on major tunnel changes.  The script
+will not be forked, so it might disrupt traffic.  Changes include the
+addition of a prefix that was offered, the addition of a route that was
+offered, and the removal of all offers; the change processing is scoped
+by an identifier, for which the \fB6bed4peer\fR uses its own process
+identifier.  Only proper teardown of the tunnel will invoke the script
+for removal of offerings.  For more hands-on information, look for the
+skeleton script included with 6bed4.
+.PP
+To be sure that a cleanup hook is run when \fB6bed4peer\fR exits, it
+must be sent a HUP, KILL or TERM signal.  In addition, the keyboard can
+send INT when Control-C is pressed.
+.TP
+\fB\-u\fR
 .TP
 \fB\-\-udp-variability\fR
 TODO - argue, and maybe implement.

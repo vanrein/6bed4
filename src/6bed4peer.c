@@ -20,6 +20,7 @@
 #include <fcntl.h>
 #include <time.h>
 
+#include <signal.h>
 #include <syslog.h>
 #ifndef LOG_PERROR
 #define LOG_PERROR LOG_CONS		/* LOG_PERROR is non-POSIX, LOG_CONS is */
@@ -79,6 +80,9 @@ typedef enum {
 /* Global variables */
 
 char *program;
+char *exthook;
+
+volatile int signalnum = 0;
 
 int rtsox = -1;
 int v4sox = -1;
@@ -385,7 +389,6 @@ bool setup_tunnel_address (void) {
 	}
 	for (int i = 0; i < v6route_count; i++) {
 		snprintf (cmd, 512, "/sbin/ip -6 route add %x:%x:%x:%x:%x:%x:%x:%x/%d via fe80:: dev %s metric 1052", ntohs (v6route_addr [i].s6_addr16 [0]), ntohs (v6route_addr [i].s6_addr16 [1]), ntohs (v6route_addr [i].s6_addr16 [2]), ntohs (v6route_addr [i].s6_addr16 [3]), ntohs (v6route_addr [i].s6_addr16 [4]), ntohs (v6route_addr [i].s6_addr16 [5]), ntohs (v6route_addr [i].s6_addr16 [6]), ntohs (v6route_addr [i].s6_addr16 [7]), v6route_pfix [i], ifreq.ifr_name);
-		printf ("SHELL$ %s\n", cmd);
 		if (ok && system (cmd) != 0) {
 			fprintf (stderr, "Failed command: %s\n", cmd);
 			ok = false;
@@ -394,6 +397,71 @@ bool setup_tunnel_address (void) {
 	return ok;
 }
 #endif /* LINUX */
+
+
+
+/*
+ *
+ * Extension Hook Functions
+ *
+ */
+
+
+/* Extension hook to deliver a new IPv6 address range that others may use.
+ */
+void exthook_add_range_offer (struct in6_addr *start, struct in6_addr *end) {
+	if (exthook == NULL) {
+		return;
+	}
+	char startstr [INET6_ADDRSTRLEN+1];
+	char endstr   [INET6_ADDRSTRLEN+1];
+	inet_ntop (AF_INET6, start, startstr, INET6_ADDRSTRLEN);
+	inet_ntop (AF_INET6, end,   endstr,   INET6_ADDRSTRLEN);
+	char cmd [512+1];
+	snprintf (cmd, 512, "%s %d add-range-offer %s %s",
+				exthook, getpid (),
+				startstr, endstr);
+	if (system (cmd) != 0) {
+		fprintf (stderr, "Hook failed: %s\n", cmd);
+	}
+}
+
+
+/* Extension hook to deliver a new IPv6 route.
+ */
+void exthook_add_route_offer (struct in6_addr *pfaddr, uint8_t pflen,
+				struct in6_addr *router) {
+	if (exthook == NULL) {
+		return;
+	}
+	char pfaddrstr [INET6_ADDRSTRLEN+1];
+	char routerstr [INET6_ADDRSTRLEN+1];
+	inet_ntop (AF_INET6, pfaddr, pfaddrstr, INET6_ADDRSTRLEN);
+	inet_ntop (AF_INET6, router, routerstr, INET6_ADDRSTRLEN);
+	char cmd [512+1];
+	snprintf (cmd, 512, "%s %d add-route-offer %s %d %s",
+				exthook, getpid (),
+				pfaddrstr, pflen, routerstr);
+	if (system (cmd) != 0) {
+		fprintf (stderr, "Hook failed: %s\n", cmd);
+	}
+}
+
+
+/* Extension hook to remove past offers by this process.
+ * This one is special; it is run during orderly shutdown.
+ */
+void exthook_del_offers (void) {
+	if (exthook == NULL) {
+		return;
+	}
+	char cmd [512+1];
+	snprintf (cmd, 512, "%s %d del-offers",
+				exthook, getpid ());
+	if (system (cmd) != 0) {
+		fprintf (stderr, "Hook failed: %s\n", cmd);
+	}
+}
 
 
 /*
@@ -418,6 +486,7 @@ void addr_6bed4 (struct in6_addr *dst_ip6, uint16_t lanip) {
 	dst_ip6->s6_addr  [15] = (lanip & 0xff);
 	dst_ip6->s6_addr  [8] &= 0xfc;
 }
+
 
 /* Look for an entry in the 50ms-cycled Neighbor Discovery queue.
  * Match the target address.  Return the entry found, or NULL.
@@ -915,7 +984,10 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 		if (v4dst6->s6_addr [8] & 0x01) {
 			syslog (LOG_WARNING, "TODO: Ignoring (by accepting) an odd public UDP port revealed in a Router Advertisement -- this could cause confusion with multicast traffic\n");
 		}
+		//
+		// Parse the Router Advertisement
 		size_t rdofs = 12;
+		int v6route_count_old = v6route_count;
 		//TODO:+4_WRONG?// while (rdofs <= ntohs (v4v6plen) + 4) { ... }
 		while (rdofs + 4 < ntohs (v4v6plen)) {
 			if (v4v6icmpdata [rdofs + 1] == 0) {
@@ -940,6 +1012,9 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 			} else if ((v4v6icmpdata [rdofs + 3] & 0xc0) != 0xc0) {
 				/* no on-link autoconfig, but routable prefix */
 				printf ("Received a routable prefix %x%02x:%x%02x:%x%02x:%x%02x:.../%d\n", v4v6icmpdata [rdofs+16], v4v6icmpdata [rdofs+17], v4v6icmpdata [rdofs+18], v4v6icmpdata [rdofs+19], v4v6icmpdata [rdofs+20], v4v6icmpdata [rdofs+21], v4v6icmpdata [rdofs+22], v4v6icmpdata [rdofs+22], v4v6icmpdata [rdofs+2]);
+				if (v6route_count_old > 0) {
+					v6route_count = v6route_count_old = 0;
+				}
 				if ((v6route_count < MAX_ROUTABLE_PREFIXES) &&
 						(v4v6icmpdata [rdofs + 2] <= 128) &&
 						(v4v6icmpdata [rdofs + 2] >= 16)) {
@@ -960,6 +1035,9 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 			rdofs += (v4v6icmpdata [rdofs + 1] << 3);
 		}
 		if (destprefix) {
+			if (v6route_count_old > 0) {
+				v6route_count = 0;
+			}
 			memcpy (v6listen.s6_addr + 0, destprefix, 16);
 			v6listen.s6_addr [14] &= 0xc0;
 			v6listen.s6_addr [15]  = 0x01;	// choose client 1
@@ -978,6 +1056,21 @@ void handle_4to6_nd (struct sockaddr_in *sin, ssize_t v4ngbcmdlen) {
 			got_lladdr = true;
 			maintenance_time_cycle = maintenance_time_cycle_max;
 			maintenance_time_sec = time (NULL) + maintenance_time_cycle;
+			struct in6_addr start, end;
+			memcpy (&start, destprefix, 16);
+			memcpy (&end,   destprefix, 16);
+			start.s6_addr [15] |= 0x02;
+			end  .s6_addr [14] |= 0x3f;
+			end  .s6_addr [15] |= 0xff;
+			/* Update the extension hooks */
+			exthook_del_offers ();
+			exthook_add_range_offer (&start, &end);
+			for (int i = 0; i < v6route_count; i++) {
+				exthook_add_route_offer (
+						&v6route_addr [i],
+						v6route_pfix [i],
+						(struct in6_addr *) destprefix);
+			}
 		}
 		return;
 	case ND_NEIGHBOR_SOLICIT:
@@ -1519,13 +1612,28 @@ void regular_maintenance (void) {
 }
 
 
+/* Indicate that the running daemon should stop.  This is intended as a
+ * signal handler function, and would instruct the select() loop to
+ * terminate.
+ */
+void signal_daemon (int signum) {
+	signalnum = signum;
+}
+
+
 /* Run the daemon core code, passing information between IPv4 and IPv6 and
- * responding to tunnel requests if so requested.
+ * responding to tunnel requests if so requested.  The loop ends when a
+ * suitable signal is received: HUP, INT, KILL, TERM.
  */
 void run_daemon (void) {
+	atexit (exthook_del_offers);
 	fd_set io;
 	bool keep;
 	maintenance_time_sec = 0;	// trigger Router Solicitation
+	signal (SIGHUP,  signal_daemon);
+	signal (SIGINT,  signal_daemon);
+	signal (SIGKILL, signal_daemon);
+	signal (SIGTERM, signal_daemon);
 	FD_ZERO (&io);
 	FD_SET (v4sox, &io);
 	FD_SET (v6sox, &io);
@@ -1536,7 +1644,7 @@ void run_daemon (void) {
 			nfds = v4mcast + 1;
 		}
 	}
-	while (1) {
+	while (signalnum == 0) {
 		struct timeval tout;
 		struct timeval now;
 		gettimeofday (&now, NULL);
@@ -1578,7 +1686,10 @@ void run_daemon (void) {
 				tout.tv_sec  -= 1;
 			}
 		}
-		if (select (nfds, &io, NULL, NULL, &tout) == -1) {
+		if (select (nfds, &io, NULL, NULL, &tout) < 0) {
+			if (errno == EINTR) {
+				return;
+			}
 			syslog (LOG_ERR, "Select failed: %s\n", strerror (errno));
 		}
 		if (FD_ISSET (v4sox, &io)) {
@@ -1607,7 +1718,7 @@ syslog (LOG_DEBUG, "WOW: Got multicast input\n");
 
 /* Option descriptive data structures */
 
-char *short_opt = "s:t:d:l:p:rk:feh";
+char *short_opt = "s:t:d:l:p:rk:fex:h";
 
 struct option long_opt [] = {
 	{ "v4server", 1, NULL, 's' },
@@ -1621,6 +1732,7 @@ struct option long_opt [] = {
 	{ "keepalive", 1, NULL, 'k' },
 	{ "keepalive-period-ttl", 1, NULL, 'k' },
 	{ "error-console", 0, NULL, 'e' },
+	{ "extension-hook", 1, NULL, 'x' },
 	{ "help", 0, NULL, 'h' },
 	{ NULL, 0, NULL, 0 }	/* Array termination */
 };
@@ -1762,9 +1874,16 @@ int process_args (int argc, char *argv []) {
 				exit (1);
 			}
 			break;
+		case 'x':
+			if (exthook != NULL) {
+				fprintf (stderr, "%s: You can only specify one extension hook\n", program);
+				ok = 0;
+				break;
+			}
+			exthook = optarg;
+			break;
 		default:
 			ok = 0;
-			help = 1;
 			/* continue into 'h' to produce usage information */
 		case 'h':
 			help = 1;

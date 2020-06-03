@@ -1,0 +1,58 @@
+#!/bin/sh
+#
+# Skeleton handler script for events from 6bed4node
+# See https://github.com/vanrein/6bed4/issues/11
+#
+# From: Rick van Rein <rick@openfortress.nl>
+
+
+# Normally, this script is called from the 6bed4peer -x 6bed4node-script.sh
+# commandline option.  When taken down properly, the 6bed4peer will remove
+# its tracks at exit.  If at any point you know that no 6bed4 setup should
+# be active, your system may call del-offers with "*" in the <pid> position
+# so any old things are removed.
+
+
+PID="$1"
+
+
+case "$2/$#" in
+
+help/*)
+	CMD=$(basename "$0")
+	echo "Usage details (where <pid> is just a handle):"
+	echo "$CMD <pid> help"
+	echo "$CMD <pid> add-range-offer <start-IPv6addr> <end-IPv6addr>"
+	echo "$CMD <pid> add-route-offer <IPv6prefix> <prefix-len> <router-IPv6addr>"
+	echo "$CMD <pid> del-offers"
+	echo "$CMD  \"*\"  del-offers"
+	;;
+
+add-range-offer/4)
+	# Offer a new IPv6 address range on your network
+	echo >&2 "Not yet implemented: $*"
+	exit 1
+	;;
+
+add-route-offer/5)
+	# Offer a new IPv6 route on your network
+	echo >&2 "Not yet implemented: $*"
+	exit 1
+	;;
+
+del-offers/2)
+	# Retract previous offers for IPv6 ranges and routes
+	#  - Specific to <pid> or unspecific when it is "*"
+	#  - Silently approve when no work needs to be done
+	#  - Note that <pid> is just a text string
+	echo >&2 "Not yet implemented: $*"
+	exit 1
+	;;
+
+*)
+	echo >&2 "Usage: $0 <pid> <subcommand> <args...>"
+	echo >&2 "Try:   $0 \$\$ help"
+	exit 1
+esac
+
+exit 0

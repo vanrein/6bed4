@@ -1132,7 +1132,7 @@ char *expand_v6prefix (struct in6_addr *prefix, uint8_t prefixlen,
 	}
 	//
 	// Write the prefix address string and return success
-	if (inet_ntop (AF_INET6, prefix, out_prefixaddrstr, INET6_ADDRSTRLEN+1) == NULL) {
+	if (inet_ntop (AF_INET6, prefix, out_prefixaddrstr, INET6_ADDRSTRLEN) == NULL) {
 		return strerror (errno);
 	}
 	return NULL;
