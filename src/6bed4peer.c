@@ -921,8 +921,7 @@ void handle_4to6_plain (ssize_t v4datalen, struct sockaddr_in *sin) {
 #ifdef PEER_USE_TAP
 	v4ether.h_proto = htons (ETH_P_IPV6);
 	memcpy (v4ether.h_dest,   v6lladdr, 6);
-	v4ether.h_source [0] = ntohs (sin->sin_port) & 0xff;
-	v4ether.h_source [1] = ntohs (sin->sin_port) >> 8;
+	memcpy (v4ether.h_source + 0, &sin->sin_port, 2);
 	memcpy (v4ether.h_source + 2, &sin->sin_addr, 4);
 #endif
 syslog (LOG_INFO, "Writing IPv6, result = %zd\n",
