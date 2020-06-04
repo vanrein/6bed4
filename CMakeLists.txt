@@ -1,3 +1,5 @@
+message(FATAL_ERROR "This repository has moved to GitLab\n\nGet 6bed4 from\n\thttps://gitlab.com/arpa2/6bed4/\n")
+
 project (6bed4 C)
 cmake_minimum_required (VERSION 2.6)
 set (VERSION "0.0.1")
